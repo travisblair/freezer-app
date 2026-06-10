@@ -1,0 +1,10 @@
+[Unit]
+Description=WiFi watchdog — pings gateway, reboots if unreachable too long
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/admin/freezer-app/deploy/wifi-watchdog.sh
+# Don't trigger a reboot loop: if the script reboots, don't restart it
+RemainAfterExit=no

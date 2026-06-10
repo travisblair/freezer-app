@@ -1,0 +1,35 @@
+# ── Freezer App service (for Raspberry Pi) ─────────────────────────────
+# Install: sudo cp deploy/freezer-app.service /etc/systemd/system/
+# Enable:  sudo systemctl enable --now freezer-app
+# Verify watchdog: sudo systemctl show freezer-app -p WatchdogTimestamp
+
+[Unit]
+Description=Freezer Inventory App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/home/admin/freezer-app
+ExecStart=/home/admin/freezer-app/prod-start.sh
+Restart=always
+RestartSec=10
+Environment=PORT=3000
+
+# ── Memory limits (Pi Zero W has 512MB, tailscaled takes ~20MB) ────────
+# Soft limit: Go GC gets aggressive above this to stay under the hard cap
+MemoryHigh=100M
+# Hard limit: kernel OOM-kills the process if it exceeds this
+MemoryMax=120M
+
+# ── Systemd watchdog ───────────────────────────────────────────────────
+# The Go server sends WATCHDOG=1 every 15s via systemd-notify.
+# If systemd doesn't receive a ping within 30s, it SIGABRTs the process
+# and restarts it via Restart=always above.
+WatchdogSec=30s
+
+# Load .env if it exists
+EnvironmentFile=-/home/admin/freezer-app/.env
+
+[Install]
+WantedBy=multi-user.target

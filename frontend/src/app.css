@@ -1,0 +1,424 @@
+/* ===== Layout Utilities ===== */
+.flex-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.gap-0 { gap: 0.25rem; }
+.gap-05 { gap: 0.5rem; }
+.gap-1 { gap: 0.75rem; }
+
+.mb-0 { margin-bottom: 0 !important; }
+.mb-h { margin-bottom: 0.5rem; }
+.mb-1 { margin-bottom: 1rem; }
+.mb-1h { margin-bottom: 1.5rem; }
+.mt-h { margin-top: 0.5rem; }
+
+.section-gap { margin-bottom: 1.5rem; }
+
+.app-container {
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+}
+
+/* ===== Scanner ===== */
+.scanner-viewport {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+}
+.scanner-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.scanner-controls input[type="number"] {
+  width: 5rem;
+  margin-bottom: 0;
+  height: 2.2rem;
+  line-height: 1;
+}
+.scanner-feedback {
+  text-align: center;
+  font-size: 2rem;
+  margin-top: 0.5rem;
+}
+
+/* ===== Status Messages ===== */
+.status-message {
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--pico-border-radius, 4px);
+}
+.status-message.success {
+  background: #d4edda;
+  color: #155724;
+}
+.status-message.error {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* ===== Warning Articles ===== */
+.article-warning {
+  background: #fff3cd;
+  color: #856404;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--pico-border-radius, 4px);
+}
+
+/* ===== Duplicate Offer ===== */
+.duplicate-offer p {
+  margin-bottom: 0.5rem;
+}
+.duplicate-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.duplicate-actions select {
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* ===== Scan Prompt Form ===== */
+.scan-prompt-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.scan-prompt-form label {
+  margin-bottom: 0;
+}
+.scan-prompt-form input[type="number"] {
+  width: 5rem;
+  margin-bottom: 0;
+}
+
+/* ===== Manual Add Form ===== */
+.manual-add-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.manual-add-form label {
+  margin-bottom: 0;
+}
+.manual-add-form input,
+.manual-add-form select {
+  margin-bottom: 0;
+}
+.manual-add-form input[type="number"] {
+  width: 5rem;
+}
+
+.table-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+.table-controls select {
+  margin-bottom: 0;
+}
+.table-controls label {
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.bulk-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  background: var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius, 4px);
+}
+.row-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.row-actions button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
+.deleted-row {
+  opacity: 0.5;
+}
+.deleted-tag {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+.cell-sm { width: 2rem; }
+.table-scroll { overflow-x: auto; }
+
+/* ===== Empty & Loading States ===== */
+.center-text {
+  text-align: center;
+  padding: 1rem;
+  color: var(--pico-muted-color);
+}
+
+/* ===== Offline Banner ===== */
+.offline-banner {
+  background: #fff3cd;
+  color: #856404;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--pico-border-radius, 4px);
+  text-align: center;
+  font-weight: bold;
+}
+
+/* ===== Auth Form ===== */
+.auth-container {
+  max-width: 400px;
+  margin: 2rem auto;
+}
+.auth-error {
+  color: var(--pico-del-color);
+  margin-bottom: 0.5rem;
+}
+.password-field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.password-field input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.password-toggle {
+  white-space: nowrap;
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+/* ===== Barcode Prompt ===== */
+.barcode-prompt {
+  margin-top: 0.75rem;
+  padding: 1rem;
+  background: var(--pico-card-background-color, #f8f9fa);
+  border: 2px solid var(--pico-primary);
+  border-radius: 8px;
+  text-align: center;
+}
+.barcode-prompt .barcode-value {
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+}
+.barcode-prompt .barcode-hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--pico-muted-color);
+}
+.barcode-prompt .barcode-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.barcode-prompt .barcode-actions button {
+  font-size: 0.9rem;
+}
+
+/* ===== Scan Prompt Form extras ===== */
+.scan-prompt-label {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.25rem;
+}
+
+/* ===== Scanner feedback ===== */
+.scanner-feedback-success { color: green; }
+.scanner-feedback-error { color: red; }
+
+/* ===== Link Barcode Modal ===== */
+.link-barcode-search {
+  margin-bottom: 0.75rem;
+}
+.link-barcode-results {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+}
+.link-barcode-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-bottom: 0.25rem;
+}
+.link-barcode-item.selected {
+  background: var(--pico-primary-focus);
+  color: var(--pico-primary-inverse);
+}
+.link-barcode-item input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.link-barcode-item small {
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* ===== Edit modal ===== */
+.edit-error-text {
+  color: var(--pico-del-color);
+  margin-bottom: 0.5rem;
+}
+.edit-barcode-text {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+
+/* ===== Buttons ===== */
+.restore-btn { color: green; }
+
+.danger-confirm {
+  background: #d32f2f;
+  border-color: #d32f2f;
+  color: white;
+}
+.danger-confirm:hover {
+  background: #b71c1c;
+  border-color: #b71c1c;
+}
+
+.remove-btn {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  color: #d32f2f;
+  border-color: #d32f2f;
+}
+.remove-btn:hover {
+  background: #d32f2f;
+  color: white;
+}
+
+/* ===== BaseModal close button (replaces PicoCSS rel="prev" hack) ===== */
+dialog article header button.pico-prev {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+}
+dialog article header button.pico-prev::before {
+  content: "×";
+  display: block;
+}
+
+/* ===== Misc ===== */
+.no-mb { margin-bottom: 0; }
+
+/* ===== Shelf Sections ===== */
+.shelf-section {
+  margin-bottom: 1rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius, 4px);
+}
+.shelf-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--pico-card-background-color, #f8f9fa);
+  cursor: pointer;
+  user-select: none;
+}
+.shelf-header:hover {
+  background: var(--pico-muted-border-color);
+}
+.shelf-toggle {
+  font-size: 0.7rem;
+  width: 1rem;
+}
+.shelf-name {
+  font-weight: bold;
+  font-size: 1rem;
+}
+.shelf-count {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+.shelf-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.25rem;
+}
+.shelf-table {
+  width: 100%;
+}
+.shelf-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.create-shelf-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.create-shelf-form input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.small-action {
+  padding: 0.15rem 0.35rem;
+  font-size: 0.75rem;
+}
+
+/* Kebab menu */
+.kebab-btn {
+  padding: 0.15rem 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.kebab-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 10;
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  min-width: 100px;
+}
+.kebab-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #222;
+}
+.kebab-item:hover {
+  background: var(--pico-muted-border-color);
+}
+.kebab-item.danger {
+  color: #d32f2f;
+}

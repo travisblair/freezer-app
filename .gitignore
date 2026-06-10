@@ -1,0 +1,63 @@
+# ── Database (contains your actual freezer contents) ─────────────────
+freezer.db
+freezer.db-shm
+freezer.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# ── Dependencies ─────────────────────────────────────────────────────
+node_modules/
+
+# ── Build output ──────────────────────────────────────────────────────
+frontend/dist/
+
+# ── Test artifacts ────────────────────────────────────────────────────
+frontend/test-results/
+frontend/playwright-report/
+playwright/.cache/
+
+# ── OS junk ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Environment / secrets ─────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Go build artifacts ─────────────────────────────────────────────────
+gobackend/freezer-server
+
+# ── Deploy artifacts ─────────────────────────────────────────────────
+deploy/release.tar.gz
+
+# ── Misc ──────────────────────────────────────────────────────────────
+*.pid
+.tunnel-url
+gobackend/gobackend
+
+# ── Hermes agent (local only) ──────────────────────────────────────
+.hermes/
+
+# ── Spec (local only) ──────────────────────────────────────────────
+spec.md
+
+# ── Phase plans (local only) ───────────────────────────────────────
+phase2.spec
+
+# ── IDE / AI agent config (local only) ─────────────────────────────
+.clinerules
+/package.json
+/package-lock.json

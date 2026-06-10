@@ -1,0 +1,28 @@
+# ── Tailscale Funnel service (Raspberry Pi) ───────────────────────────
+# Install: sudo cp deploy/tailscale-funnel.service /etc/systemd/system/
+# Enable:  sudo systemctl enable --now tailscale-funnel
+
+[Unit]
+Description=Tailscale Funnel for Freezer App
+After=freezer-app.service
+Requires=freezer-app.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/tailscale funnel 3000
+Restart=always
+RestartSec=10
+
+# Sandbox the root process to minimize blast radius
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=multi-user.target

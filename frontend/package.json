@@ -1,0 +1,23 @@
+{
+  "name": "freezer-app-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "tunnel": "cloudflared tunnel --url http://localhost:5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@picocss/pico": "2.0.6",
+    "html5-qrcode": "2.3.8",
+    "solid-js": "1.9.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "typescript": "6.0.3",
+    "vite": "6.0.0",
+    "vite-plugin-solid": "2.11.0"
+  }
+}
