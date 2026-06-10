@@ -73,17 +73,20 @@ func OpenDB() *gorm.DB {
 		db.Create(&shelf1)
 	}
 
-	// One-time: move all existing item counts into ItemShelf rows.
-	// Idempotent: silently fails if the count column was already dropped
-	// by a prior AutoMigrate. Only items with the old count column present
-	// will be migrated.
-	db.Exec(`
-		INSERT INTO item_shelves (item_id, shelf_id, count)
-		SELECT id, ?, count FROM items
-		WHERE count > 0 AND id NOT IN (
-			SELECT item_id FROM item_shelves
-		)
-	`, shelf1.ID)
+	// One-time: move existing item counts into ItemShelf rows, but only
+	// if the old `count` column is still present on the `items` table.
+	// After AutoMigrate drops the column, this becomes a harmless no-op.
+	var hasCount bool
+	db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasCount)
+	if hasCount {
+		db.Exec(`
+			INSERT INTO item_shelves (item_id, shelf_id, count)
+			SELECT id, ?, count FROM items
+			WHERE count > 0 AND id NOT IN (
+				SELECT item_id FROM item_shelves
+			)
+		`, shelf1.ID)
+	}
 
 	return db
 }
