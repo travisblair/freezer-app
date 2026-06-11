@@ -3,8 +3,9 @@ package main
 import "strings"
 
 const (
-	maxNameLength = 100
-	maxQuantity   = 9999
+	maxNameLength   = 100
+	maxQuantity     = 9999
+	maxSearchLength = 200
 )
 
 // validName returns the trimmed name and true if non-empty and ≤ maxNameLength.

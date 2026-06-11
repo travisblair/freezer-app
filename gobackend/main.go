@@ -37,7 +37,10 @@ func main() {
 	db := OpenDB()
 
 	// Graceful shutdown plumbing
-	sqlDB, _ := db.DB()
+	sqlDB, err := db.DB()
+	if err != nil {
+		logger.Fatal("failed to get underlying sql.DB: %v", err)
+	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	serverErr := make(chan error, 1)
@@ -180,6 +183,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		w.Header().Set("Vary", "Origin")
 		if trustedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")

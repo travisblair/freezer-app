@@ -7,7 +7,9 @@
     "dev": "vite",
     "tunnel": "cloudflared tunnel --url http://localhost:5173",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@picocss/pico": "2.0.6",
@@ -16,8 +18,11 @@
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",
+    "@solidjs/testing-library": "^0.8.10",
+    "jsdom": "^29.1.1",
     "typescript": "6.0.3",
     "vite": "6.0.0",
-    "vite-plugin-solid": "2.11.0"
+    "vite-plugin-solid": "2.11.0",
+    "vitest": "^4.1.8"
   }
 }

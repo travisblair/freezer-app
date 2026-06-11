@@ -5,7 +5,7 @@ import { totalCount } from "../helpers";
 interface Props {
   barcode: string;
   existing: Item;
-  showModeToggle: boolean;
+  showModeToggle?: boolean;
   onResolve: (mode: string) => void;
   onDismiss: () => void;
 }

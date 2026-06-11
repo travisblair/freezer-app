@@ -43,6 +43,11 @@ func handleListItems(db *gorm.DB) http.HandlerFunc {
 		showOutOfStock := r.URL.Query().Get("showOutOfStock") == "true"
 		search := strings.TrimSpace(r.URL.Query().Get("search"))
 
+		if len(search) > maxSearchLength {
+			errorJSON(w, http.StatusBadRequest, "search query too long")
+			return
+		}
+
 		tx := db.Preload("Barcodes").Preload("Shelves").Order("name ASC")
 
 		if search != "" {
@@ -79,6 +84,10 @@ func handleSearchItems(db *gorm.DB) http.HandlerFunc {
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
 		if q == "" {
 			writeJSON(w, http.StatusOK, []Item{})
+			return
+		}
+		if len(q) > maxSearchLength {
+			errorJSON(w, http.StatusBadRequest, "search query too long")
 			return
 		}
 		var items []Item
@@ -145,14 +154,16 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			targetShelfID = item.Shelves[0].ShelfID
 		}
 
-		// Find or create the ItemShelf row for this shelf
+		// Find or create the ItemShelf row for this shelf (in a transaction
+		// to prevent a TOCTOU race between First and Create).
 		var itemShelf ItemShelf
-		fsErr := db.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error
-		if fsErr != nil {
-			// Item not on this shelf yet — create with 0 count, then increment
-			itemShelf = ItemShelf{ItemID: item.ID, ShelfID: targetShelfID, Count: 0}
-			db.Create(&itemShelf)
-		}
+		db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error; err != nil {
+				itemShelf = ItemShelf{ItemID: item.ID, ShelfID: targetShelfID, Count: 0}
+				return tx.Create(&itemShelf).Error
+			}
+			return nil
+		})
 
 		delta := body.Quantity
 		if body.Mode == "decrement" {
@@ -539,8 +550,8 @@ func handleSetShelfCount(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusBadRequest, "count is required")
 			return
 		}
-		if !validQty(*body.Count) {
-			errorJSON(w, http.StatusBadRequest, "quantity must be 1–9999")
+		if !validCount(*body.Count) {
+			errorJSON(w, http.StatusBadRequest, "count must be 0–9999")
 			return
 		}
 

@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 	}
 	resp.Body.Close()
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-freezer_token" {
+		if c.Name == getCookieName() {
 			testSessionCookie = c.Value
 			break
 		}
@@ -72,7 +72,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 func authCookie() *http.Cookie {
 	return &http.Cookie{
-		Name:  "__Host-freezer_token",
+		Name:  getCookieName(),
 		Value: testSessionCookie,
 	}
 }
@@ -125,7 +125,7 @@ func TestAuthRejectsWrongCookie(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", ts.URL+"/api/item/create", bytes.NewBufferString(`{"name":"test","quantity":1}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: "__Host-freezer_token", Value: "bogus-token"})
+	req.AddCookie(&http.Cookie{Name: getCookieName(), Value: "bogus-token"})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -590,7 +590,7 @@ func TestAuthLoginSuccess(t *testing.T) {
 	// Verify cookie was set
 	var found bool
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-freezer_token" && c.Value != "" {
+		if c.Name == getCookieName() && c.Value != "" {
 			found = true
 			break
 		}
@@ -661,7 +661,7 @@ func TestAuthLogout(t *testing.T) {
 	resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
 	var sessionCookie *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-freezer_token" {
+		if c.Name == getCookieName() {
 			sessionCookie = c
 			break
 		}
@@ -748,7 +748,7 @@ func TestAuthNewLoginInvalidatesOldSession(t *testing.T) {
 	resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
 	var oldCookie *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-freezer_token" {
+		if c.Name == getCookieName() {
 			oldCookie = c
 			break
 		}
@@ -762,7 +762,7 @@ func TestAuthNewLoginInvalidatesOldSession(t *testing.T) {
 	resp, _ = http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
 	var newCookie *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-freezer_token" {
+		if c.Name == getCookieName() {
 			newCookie = c
 			break
 		}
@@ -1108,4 +1108,56 @@ func TestMoveItemBetweenShelves(t *testing.T) {
 		}
 	}
 	t.Fatal("item not found after move")
+}
+
+// ── Set shelf count to 0 (regression test for validQty → validCount) ──
+
+func TestSetShelfCountToZero(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Zero Count", "quantity": 3, "shelfId": 1,
+	}, true)
+	var item Item
+	decodeJSON(t, resp, &item)
+
+	shelfID := item.Shelves[0].ID
+	resp = doJSON(t, ts, "PATCH", fmt.Sprintf("/api/item-shelf/%d", shelfID), map[string]interface{}{
+		"count": 0,
+	}, true)
+	if resp.StatusCode != 200 {
+		var errBody map[string]interface{}
+		decodeJSON(t, resp, &errBody)
+		t.Fatalf("expected 200 for count=0, got %d: %v", resp.StatusCode, errBody)
+	}
+	var sc map[string]interface{}
+	decodeJSON(t, resp, &sc)
+	if int(sc["count"].(float64)) != 0 {
+		t.Fatalf("expected count 0, got %v", sc["count"])
+	}
+}
+
+// ── Search length limit ──────────────────────────────────────────────
+
+func TestSearchRejectsLongQuery(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Build a 201-character search query
+	longQ := strings.Repeat("x", 201)
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?search="+longQ, nil)
+	req.AddCookie(authCookie())
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 for long search, got %d", resp.StatusCode)
+	}
+
+	req2, _ := http.NewRequest("GET", ts.URL+"/api/search-items?q="+longQ, nil)
+	req2.AddCookie(authCookie())
+	resp2, _ := http.DefaultClient.Do(req2)
+	if resp2.StatusCode != 400 {
+		t.Fatalf("expected 400 for long search query, got %d", resp2.StatusCode)
+	}
 }

@@ -5,6 +5,7 @@ interface Props {
   onClose: () => void;
   children?: JSX.Element;
   footer?: JSX.Element;
+  dialogRef?: (el: HTMLDialogElement) => void;
 }
 
 /**
@@ -16,7 +17,10 @@ export default function BaseModal(props: Props) {
   let dialogRef: HTMLDialogElement | undefined;
 
   onMount(() => {
-    if (dialogRef) dialogRef.showModal();
+    if (dialogRef) {
+      dialogRef.showModal();
+      props.dialogRef?.(dialogRef);
+    }
   });
 
   function close() {

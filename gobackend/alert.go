@@ -108,11 +108,13 @@ func CheckCrashOnStartup() {
 			"The freezer app crashed or lost power and has recovered.\n"+
 				"Time: %s\n"+
 				"Requests served before crash: %d\n\n"+
-				"Last log lines before crash:\n%s\n\n"+
-				"Full log: ~/freezer-app/data/server.log",
+				"Pre-crash system state:\n%s\n\n"+
+				"Server log: %s\n"+
+				"System state log: ~/freezer-app/data/system-capture.log",
 			time.Now().Format("Jan 2, 3:04 PM MST"),
 			RequestCount(),
-			tailOfLogFile(),
+			tailOfCaptureLog(),
+			logLocation(),
 		)
 		sendAlert("\u26d1 Freezer-app recovered", body)
 	}
@@ -157,8 +159,8 @@ func StartHeartbeat(stop <-chan os.Signal, getStatus func() string) {
 func tailOfLogFile() string {
 	logFile := os.Getenv("LOG_FILE")
 	if logFile == "" {
-		execDir, _ := os.Getwd()
-		logFile = filepath.Join(execDir, "data", "server.log")
+		// Match the default in logging.go
+		logFile = "/tmp/server.log"
 	}
 
 	f, err := os.Open(logFile)
@@ -213,4 +215,53 @@ func redactSecrets(s string) string {
 		filtered = append(filtered, line)
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// logLocation returns where the server log is written (for crash alert context).
+func logLocation() string {
+	if lf := os.Getenv("LOG_FILE"); lf != "" {
+		return lf
+	}
+	return "/tmp/server.log"
+}
+
+// tailOfCaptureLog returns the last ~1000 bytes of the system-capture log.
+// This survives reboots (stored on SD card) and contains pre-crash state.
+func tailOfCaptureLog() string {
+	captureFile := os.Getenv("CAPTURE_LOG")
+	if captureFile == "" {
+		execDir, _ := os.Getwd()
+		captureFile = filepath.Join(execDir, "data", "system-capture.log")
+	}
+
+	f, err := os.Open(captureFile)
+	if err != nil {
+		return "(no capture log yet)"
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return "(capture log not readable)"
+	}
+
+	const tailBytes = 1000
+	offset := info.Size() - tailBytes
+	if offset < 0 {
+		offset = 0
+	}
+
+	buf := make([]byte, info.Size()-offset)
+	if _, err := f.ReadAt(buf, offset); err != nil {
+		return "(failed to read capture log)"
+	}
+
+	result := string(buf)
+	if len(result) > 1000 {
+		result = result[len(result)-1000:]
+	}
+	if result == "" {
+		return "(capture log was empty)"
+	}
+	return result
 }

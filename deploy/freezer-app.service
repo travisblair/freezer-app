@@ -15,8 +15,7 @@ ExecStart=/home/admin/freezer-app/prod-start.sh
 Restart=always
 RestartSec=10
 Environment=PORT=3000
-
-# ── Memory limits (Pi Zero W has 512MB, tailscaled takes ~20MB) ────────
+Environment=GOMEMLIMIT=80MiB
 # Soft limit: Go GC gets aggressive above this to stay under the hard cap
 MemoryHigh=100M
 # Hard limit: kernel OOM-kills the process if it exceeds this

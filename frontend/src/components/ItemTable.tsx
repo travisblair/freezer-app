@@ -24,6 +24,8 @@ export default function ItemTable() {
   const [menuOpen, setMenuOpen] = createSignal<number | null>(null);
   const [moveState, setMoveState] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
   const [renameVal, setRenameVal] = createSignal("");
+  const [editCount, setEditCount] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
+  const [editCountVal, setEditCountVal] = createSignal(0);
 
   function smap(): ShelfMap {
     const m: ShelfMap = new Map();
@@ -86,6 +88,33 @@ export default function ItemTable() {
     } catch (err) {
       if (import.meta.env.DEV) console.error("Move failed", err);
     }
+  }
+
+  function startEditCount(item: Item, shelfId: number, count: number) {
+    setEditCount({ item, shelfId, count });
+    setEditCountVal(count);
+    setMenuOpen(null);
+  }
+
+  async function saveEditCount() {
+    const ec = editCount();
+    if (!ec) return;
+    const val = Math.max(0, Math.min(9999, editCountVal()));
+    try {
+      // Find the ItemShelf row for this shelf
+      const is = ec.item.shelves?.find(s => s.shelfId === ec.shelfId);
+      if (is) {
+        await api.setShelfCount(is.id, val);
+      }
+      setEditCount(null);
+      await loadItems();
+    } catch (err) {
+      if (import.meta.env.DEV) console.error("Edit count failed", err);
+    }
+  }
+
+  function shelfName(id: number): string {
+    return shelves().find(s => s.id === id)?.name || `Shelf ${id}`;
   }
 
   return (
@@ -163,13 +192,46 @@ export default function ItemTable() {
                         <tr class={oos ? "deleted-row" : ""}>
                           <td class="cell-sm"><input type="checkbox" checked={selectedSet().has(item.id)} onChange={() => toggleSelect(item.id)} /></td>
                           <td>{item.name}{oos && <span class="deleted-tag">(out of stock)</span>}</td>
-                          <td>{count}</td>
+                          <td style="min-width:100px">
+                            <Show when={editCount() && editCount()!.item.id === item.id}
+                              fallback={<>{count}</>}>
+                              <div style="display:flex;align-items:center;gap:0.25rem">
+                                <Show when={(item.shelves?.length ?? 0) > 1}>
+                                  <select
+                                    value={editCount()!.shelfId}
+                                    onChange={e => {
+                                      const sid = Number(e.target.value);
+                                      const s = item.shelves?.find(sh => sh.shelfId === sid);
+                                      setEditCount({ item, shelfId: sid, count: s?.count ?? 0 });
+                                      setEditCountVal(s?.count ?? 0);
+                                    }}
+                                    style="margin:0;padding:0.1rem 0.3rem;font-size:0.8rem;width:auto"
+                                  >
+                                    {item.shelves?.map(s => (
+                                      <option value={s.shelfId}>{shelfName(s.shelfId)}</option>
+                                    ))}
+                                  </select>
+                                </Show>
+                                <input
+                                  type="number"
+                                  min="0" max="9999"
+                                  value={editCountVal()}
+                                  onInput={e => setEditCountVal(parseInt(e.target.value, 10) || 0)}
+                                  style="margin:0;padding:0.1rem 0.3rem;font-size:0.8rem;width:4rem"
+                                  autofocus
+                                />
+                                <button type="button" class="outline small-action" onClick={saveEditCount} style="color:green">✓</button>
+                                <button type="button" class="outline small-action" onClick={() => setEditCount(null)}>✕</button>
+                              </div>
+                            </Show>
+                          </td>
                           <td class="cell-sm" style="position:relative">
                             <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); setMenuOpen(menuOpen() === item.id ? null : item.id); }}>⋮</button>
                             <Show when={menuOpen() === item.id}>
                               <div class="kebab-menu">
                                 <div class="kebab-item" onClick={() => { setMenuOpen(null); a.setEditingItem(item); }}>Edit</div>
                                 <div class="kebab-item" onClick={() => { setMenuOpen(null); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
+                                <div class="kebab-item" onClick={() => startEditCount(item, shelf.id, count)}>Edit Count</div>
                                 <Show when={!oos}><div class="kebab-item danger" onClick={() => { setMenuOpen(null); a.handleHardDelete(item); }}>Delete</div></Show>
                                 <Show when={oos}><div class="kebab-item" onClick={() => { setMenuOpen(null); a.handleRestore(item); }}>Restore</div></Show>
                               </div>

@@ -1,4 +1,3 @@
-import { onMount } from "solid-js";
 import BaseModal from "./BaseModal";
 
 interface Props {
@@ -9,21 +8,15 @@ interface Props {
 }
 
 export default function ConfirmModal(props: Props) {
-  let dialogRef: HTMLDialogElement | undefined;
-
-  onMount(() => {
-    // Grab the rendered <dialog> from BaseModal (it's the first child)
-    const article = document.querySelector("dialog[open]");
-    if (article instanceof HTMLDialogElement) dialogRef = article;
-  });
+  let dialogEl: HTMLDialogElement | undefined;
 
   function handleCancel() {
-    if (dialogRef) dialogRef.close();
+    if (dialogEl) dialogEl.close();
     props.onCancel();
   }
 
   function handleConfirm() {
-    if (dialogRef) dialogRef.close();
+    if (dialogEl) dialogEl.close();
     props.onConfirm();
   }
 
@@ -31,6 +24,7 @@ export default function ConfirmModal(props: Props) {
     <BaseModal
       title="Confirm"
       onClose={props.onCancel}
+      dialogRef={(el) => { dialogEl = el; }}
       footer={
         <>
           <button type="button" class="secondary" onClick={handleCancel}>

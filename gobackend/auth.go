@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,9 +15,8 @@ import (
 )
 
 const (
-	cookieName         = "__Host-freezer_token"
-	bcryptCost         = 8 // Pi Zero W friendly; still computationally expensive to brute-force
-	sessionTokenBytes  = 32
+	bcryptCost        = 8 // Pi Zero W friendly; still computationally expensive to brute-force
+	sessionTokenBytes = 32
 )
 
 // ── Password helpers ───────────────────────────────────────────────────
@@ -141,13 +141,20 @@ func parseCookies(header string) map[string]string {
 	return m
 }
 
+func getCookieName() string {
+	if name := os.Getenv("COOKIE_NAME"); name != "" {
+		return name
+	}
+	return "__Host-freezer_token"
+}
+
 func isSecure(r *http.Request) bool {
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
+		Name:     getCookieName(),
 		Value:    token,
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60,
@@ -159,7 +166,7 @@ func setSessionCookie(w http.ResponseWriter, token string, r *http.Request) {
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
+		Name:     getCookieName(),
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
@@ -171,7 +178,7 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 func getSessionToken(r *http.Request) string {
 	cookies := parseCookies(r.Header.Get("Cookie"))
-	return cookies[cookieName]
+	return cookies[getCookieName()]
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────

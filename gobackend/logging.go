@@ -71,8 +71,8 @@ func newAppLogger() *AppLogger {
 	// Open log file (best-effort; failures are non-fatal)
 	logFile := os.Getenv("LOG_FILE")
 	if logFile == "" {
-		execDir, _ := os.Getwd()
-		logFile = filepath.Join(execDir, "data", "server.log")
+		// Default to /tmp to avoid SD card I/O pressure on Pi
+		logFile = "/tmp/server.log"
 	}
 	// Ensure directory exists
 	dir := filepath.Dir(logFile)
