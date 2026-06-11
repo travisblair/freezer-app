@@ -76,29 +76,19 @@ export default function ItemTable() {
   const [moveTarget, setMoveTarget] = createSignal(1);
   const [moveQty, setMoveQty] = createSignal(1);
 
+  const otherShelves = () => shelves().filter(s => s.id !== (moveState()?.shelfId ?? 0));
+  const moveTargetInit = () => otherShelves()[0]?.id ?? 1;
+
   async function doMove() {
     const ms = moveState();
     if (!ms) return;
     try {
-      if (moveTarget() === ms.shelfId) {
-        // Same shelf — just update count
-        const is = ms.item.shelves?.find(s => s.shelfId === ms.shelfId);
-        if (is) {
-          await api.setShelfCount(is.id, moveQty());
-        }
-      } else {
-        // Different shelf — move items
-        await api.moveItem(ms.item.id, ms.shelfId, moveTarget(), moveQty());
-      }
+      await api.moveItem(ms.item.id, ms.shelfId, moveTarget(), moveQty());
       setMoveState(null);
       await loadItems();
     } catch (err) {
-      if (import.meta.env.DEV) console.error("Edit/Move failed", err);
+      if (import.meta.env.DEV) console.error("Move failed", err);
     }
-  }
-
-  function shelfName(id: number): string {
-    return shelves().find(s => s.id === id)?.name || `Shelf ${id}`;
   }
 
   let countTimer: ReturnType<typeof setTimeout> | null = null;
@@ -285,28 +275,26 @@ export default function ItemTable() {
       <Show when={moveState()}>
         {(() => {
           const ms = moveState()!;
-          setMoveTarget(ms.shelfId);
+          setMoveTarget(moveTargetInit());
           setMoveQty(ms.count);
           return (
             <dialog open>
               <article>
                 <header>
                   <button class="pico-prev" onClick={() => setMoveState(null)} />
-                  <strong>Edit / Move {ms.item.name}</strong>
+                  <strong>Move {ms.item.name}</strong>
                 </header>
                 <label>
-                  Shelf
+                  To shelf
                   <select value={String(moveTarget())} onChange={e => setMoveTarget(Number((e.target as HTMLSelectElement).value))}>
-                    {shelves().map(s => (
-                      <option value={String(s.id)} selected={s.id === ms.shelfId}>
-                        {s.name}{s.id === ms.shelfId ? " (current)" : ""}
-                      </option>
+                    {shelves().filter(s => s.id !== ms.shelfId).map(s => (
+                      <option value={String(s.id)}>{s.name}</option>
                     ))}
                   </select>
                 </label>
                 <label>
                   Quantity
-                  <input type="number" min="0" max="9999" value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 0); }} style="width:5rem" />
+                  <input type="number" min="1" max="9999" value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 1); }} style="width:5rem" />
                 </label>
                 <footer>
                   <button type="button" class="secondary" onClick={() => setMoveState(null)}>Cancel</button>
