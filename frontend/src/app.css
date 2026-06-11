@@ -422,3 +422,45 @@ dialog article header button.pico-prev::before {
 .kebab-item.danger {
   color: #d32f2f;
 }
+
+/* ===== Inline Count Editor ===== */
+.count-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.count-editor .count-btn {
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color, #f8f9fa);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  color: black;
+  border-radius: 0;
+}
+.count-editor .count-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.count-editor .count-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.count-editor .count-input {
+  width: 3.2rem;
+  height: 1.6rem;
+  padding: 0 0.2rem;
+  margin: 0;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  -moz-appearance: textfield;
+}
+.count-editor .count-input::-webkit-inner-spin-button,
+.count-editor .count-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

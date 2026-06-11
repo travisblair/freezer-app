@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, createEffect, onCleanup } from "solid-js";
 import type { Item, Shelf } from "../types";
 import { totalCount } from "../helpers";
 import { api } from "../api";
@@ -24,8 +24,6 @@ export default function ItemTable() {
   const [menuOpen, setMenuOpen] = createSignal<number | null>(null);
   const [moveState, setMoveState] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
   const [renameVal, setRenameVal] = createSignal("");
-  const [editCount, setEditCount] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
-  const [editCountVal, setEditCountVal] = createSignal(0);
 
   function smap(): ShelfMap {
     const m: ShelfMap = new Map();
@@ -82,40 +80,51 @@ export default function ItemTable() {
     const ms = moveState();
     if (!ms) return;
     try {
-      await api.moveItem(ms.item.id, ms.shelfId, moveTarget(), moveQty());
+      if (moveTarget() === ms.shelfId) {
+        // Same shelf — just update count
+        const is = ms.item.shelves?.find(s => s.shelfId === ms.shelfId);
+        if (is) {
+          await api.setShelfCount(is.id, moveQty());
+        }
+      } else {
+        // Different shelf — move items
+        await api.moveItem(ms.item.id, ms.shelfId, moveTarget(), moveQty());
+      }
       setMoveState(null);
       await loadItems();
     } catch (err) {
-      if (import.meta.env.DEV) console.error("Move failed", err);
-    }
-  }
-
-  function startEditCount(item: Item, shelfId: number, count: number) {
-    setEditCount({ item, shelfId, count });
-    setEditCountVal(count);
-    setMenuOpen(null);
-  }
-
-  async function saveEditCount() {
-    const ec = editCount();
-    if (!ec) return;
-    const val = Math.max(0, Math.min(9999, editCountVal()));
-    try {
-      // Find the ItemShelf row for this shelf
-      const is = ec.item.shelves?.find(s => s.shelfId === ec.shelfId);
-      if (is) {
-        await api.setShelfCount(is.id, val);
-      }
-      setEditCount(null);
-      await loadItems();
-    } catch (err) {
-      if (import.meta.env.DEV) console.error("Edit count failed", err);
+      if (import.meta.env.DEV) console.error("Edit/Move failed", err);
     }
   }
 
   function shelfName(id: number): string {
     return shelves().find(s => s.id === id)?.name || `Shelf ${id}`;
   }
+
+  let countTimer: ReturnType<typeof setTimeout> | null = null;
+  async function updateCount(shelfId: number, value: number) {
+    if (countTimer) clearTimeout(countTimer);
+    countTimer = setTimeout(async () => {
+      try {
+        await api.setShelfCount(shelfId, value);
+        await loadItems();
+      } catch (_) {}
+    }, 400);
+  }
+
+  // Close kebab menu on outside click
+  createEffect(() => {
+    const open = menuOpen();
+    if (open === null) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".kebab-menu") && !target.closest(".kebab-btn")) {
+        setMenuOpen(null);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
 
   return (
     <div>
@@ -188,50 +197,54 @@ export default function ItemTable() {
                   <tbody>
                     {si.map(({ item, count }) => {
                       const oos = count === 0;
+                      const rowKey = item.id * 10000 + shelf.id;
                       return (
                         <tr class={oos ? "deleted-row" : ""}>
                           <td class="cell-sm"><input type="checkbox" checked={selectedSet().has(item.id)} onChange={() => toggleSelect(item.id)} /></td>
                           <td>{item.name}{oos && <span class="deleted-tag">(out of stock)</span>}</td>
-                          <td style="min-width:100px">
-                            <Show when={editCount() && editCount()!.item.id === item.id}
-                              fallback={<>{count}</>}>
-                              <div style="display:flex;align-items:center;gap:0.25rem">
-                                <Show when={(item.shelves?.length ?? 0) > 1}>
-                                  <select
-                                    value={editCount()!.shelfId}
-                                    onChange={e => {
-                                      const sid = Number(e.target.value);
-                                      const s = item.shelves?.find(sh => sh.shelfId === sid);
-                                      setEditCount({ item, shelfId: sid, count: s?.count ?? 0 });
-                                      setEditCountVal(s?.count ?? 0);
-                                    }}
-                                    style="margin:0;padding:0.1rem 0.3rem;font-size:0.8rem;width:auto"
-                                  >
-                                    {item.shelves?.map(s => (
-                                      <option value={s.shelfId}>{shelfName(s.shelfId)}</option>
-                                    ))}
-                                  </select>
-                                </Show>
-                                <input
-                                  type="number"
-                                  min="0" max="9999"
-                                  value={editCountVal()}
-                                  onInput={e => setEditCountVal(parseInt(e.target.value, 10) || 0)}
-                                  style="margin:0;padding:0.1rem 0.3rem;font-size:0.8rem;width:4rem"
-                                  autofocus
-                                />
-                                <button type="button" class="outline small-action" onClick={saveEditCount} style="color:green">✓</button>
-                                <button type="button" class="outline small-action" onClick={() => setEditCount(null)}>✕</button>
-                              </div>
-                            </Show>
+                          <td class="cell-sm count-cell">
+                            <div class="count-editor" data-shelf-id={(() => {
+                              const is = item.shelves?.find(s => s.shelfId === shelf.id);
+                              return is?.id ?? 0;
+                            })()}>
+                              <button type="button" class="count-btn count-minus" onClick={e => {
+                                const div = (e.target as HTMLElement).closest(".count-editor")!;
+                                const input = div.querySelector("input")!;
+                                const sid = Number(div.getAttribute("data-shelf-id"));
+                                const v = Math.max(0, parseInt(input.value, 10) - 1);
+                                input.value = String(v);
+                                updateCount(sid, v);
+                              }}>{count === 1 ? "🗑" : "−"}</button>
+                              <input
+                                type="number"
+                                min="0" max="9999"
+                                value={count}
+                                class="count-input"
+                                onChange={e => {
+                                  const input = e.target as HTMLInputElement;
+                                  const div = input.closest(".count-editor")!;
+                                  const sid = Number(div.getAttribute("data-shelf-id"));
+                                  const v = Math.max(0, Math.min(9999, parseInt(input.value, 10) || 0));
+                                  input.value = String(v);
+                                  updateCount(sid, v);
+                                }}
+                              />
+                              <button type="button" class="count-btn count-plus" onClick={e => {
+                                const div = (e.target as HTMLElement).closest(".count-editor")!;
+                                const input = div.querySelector("input")!;
+                                const sid = Number(div.getAttribute("data-shelf-id"));
+                                const v = Math.min(9999, parseInt(input.value, 10) + 1);
+                                input.value = String(v);
+                                updateCount(sid, v);
+                              }}>+</button>
+                            </div>
                           </td>
                           <td class="cell-sm" style="position:relative">
-                            <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); setMenuOpen(menuOpen() === item.id ? null : item.id); }}>⋮</button>
-                            <Show when={menuOpen() === item.id}>
+                            <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); setMenuOpen(menuOpen() === rowKey ? null : rowKey); }}>⋮</button>
+                            <Show when={menuOpen() === rowKey}>
                               <div class="kebab-menu">
                                 <div class="kebab-item" onClick={() => { setMenuOpen(null); a.setEditingItem(item); }}>Edit</div>
                                 <div class="kebab-item" onClick={() => { setMenuOpen(null); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
-                                <div class="kebab-item" onClick={() => startEditCount(item, shelf.id, count)}>Edit Count</div>
                                 <Show when={!oos}><div class="kebab-item danger" onClick={() => { setMenuOpen(null); a.handleHardDelete(item); }}>Delete</div></Show>
                                 <Show when={oos}><div class="kebab-item" onClick={() => { setMenuOpen(null); a.handleRestore(item); }}>Restore</div></Show>
                               </div>
@@ -272,28 +285,32 @@ export default function ItemTable() {
       <Show when={moveState()}>
         {(() => {
           const ms = moveState()!;
+          setMoveTarget(ms.shelfId);
           setMoveQty(ms.count);
           return (
             <dialog open>
               <article>
                 <header>
                   <button class="pico-prev" onClick={() => setMoveState(null)} />
-                  <strong>Move {ms.item.name}</strong>
+                  <strong>Edit / Move {ms.item.name}</strong>
                 </header>
-                <p>From: <strong>{shelves().find(s => s.id === ms.shelfId)?.name || ms.shelfId}</strong> ({ms.count} available)</p>
                 <label>
-                  To shelf
+                  Shelf
                   <select value={String(moveTarget())} onChange={e => setMoveTarget(Number((e.target as HTMLSelectElement).value))}>
-                    {shelves().filter(s => s.id !== ms.shelfId).map(s => <option value={String(s.id)}>{s.name}</option>)}
+                    {shelves().map(s => (
+                      <option value={String(s.id)} selected={s.id === ms.shelfId}>
+                        {s.name}{s.id === ms.shelfId ? " (current)" : ""}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label>
                   Quantity
-                  <input type="number" min="1" max={ms.count} value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 1); }} style="width:5rem" />
+                  <input type="number" min="0" max="9999" value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 0); }} style="width:5rem" />
                 </label>
                 <footer>
                   <button type="button" class="secondary" onClick={() => setMoveState(null)}>Cancel</button>
-                  <button type="button" onClick={doMove}>Move</button>
+                  <button type="button" onClick={doMove}>Save</button>
                 </footer>
               </article>
             </dialog>
