@@ -1,4 +1,4 @@
-import { Show, createSignal, createEffect, onCleanup } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import type { Item, Shelf } from "../types";
 import { totalCount } from "../helpers";
 import { api } from "../api";
@@ -22,9 +22,15 @@ export default function ItemTable() {
   const [collapsed, setCollapsed] = createSignal<Set<number>>(new Set());
   const [newName, setNewName] = createSignal("");
   const [renameId, setRenameId] = createSignal<number | null>(null);
-  const [menuOpen, setMenuOpen] = createSignal<number | null>(null);
   const [moveState, setMoveState] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
   const [renameVal, setRenameVal] = createSignal("");
+
+  // Per-row kebab state — a simple number tracking which rowKey is open
+  const [openKebab, setOpenKebab] = createSignal(0);
+
+  function toggleKebab(rowKey: number) {
+    setOpenKebab(prev => prev === rowKey ? 0 : rowKey);
+  }
 
   function smap(): ShelfMap {
     const m: ShelfMap = new Map();
@@ -103,20 +109,6 @@ export default function ItemTable() {
     }, 400);
   }
 
-  // Close kebab menu on outside click
-  createEffect(() => {
-    const open = menuOpen();
-    if (open === null) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".kebab-menu") && !target.closest(".kebab-btn")) {
-        setMenuOpen(null);
-      }
-    };
-    document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
-  });
-
   return (
     <div>
       <div class="grid mb-1">
@@ -186,7 +178,8 @@ export default function ItemTable() {
               <Show when={!hidden}>
                 <table class="shelf-table">
                   <tbody>
-                    {si.map(({ item, count }) => {
+                    <For each={si}>
+                      {({ item, count }) => {
                       const oos = count === 0;
                       const rowKey = item.id * 10000 + shelf.id;
                       return (
@@ -231,19 +224,19 @@ export default function ItemTable() {
                             </div>
                           </td>
                           <td class="cell-sm" style="position:relative">
-                            <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); setMenuOpen(menuOpen() === rowKey ? null : rowKey); }}>⋮</button>
-                            <Show when={menuOpen() === rowKey}>
+                            <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); toggleKebab(rowKey); }}>⋮</button>
+                            <Show when={openKebab() === rowKey}>
                               <div class="kebab-menu">
-                                <div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.setEditingItem(item), 0); }}>Edit</div>
-                                <div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => setMoveState({ item, shelfId: shelf.id, count }), 0); }}>Move</div>
-                                <Show when={!oos}><div class="kebab-item danger" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.handleHardDelete(item), 0); }}>Delete</div></Show>
-                                <Show when={oos}><div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.handleRestore(item), 0); }}>Restore</div></Show>
+                                <div class="kebab-item" onClick={() => { setOpenKebab(0); a.setEditingItem(item); }}>Edit</div>
+                                <div class="kebab-item" onClick={() => { setOpenKebab(0); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
+                                <Show when={!oos}><div class="kebab-item danger" onClick={() => { setOpenKebab(0); a.handleHardDelete(item); }}>Delete</div></Show>
+                                <Show when={oos}><div class="kebab-item" onClick={() => { setOpenKebab(0); a.handleRestore(item); }}>Restore</div></Show>
                               </div>
                             </Show>
                           </td>
                         </tr>
                       );
-                    })}
+                    }}</For>
                   </tbody>
                 </table>
               </Show>
