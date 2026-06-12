@@ -410,15 +410,14 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 func handleListShelves(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		listIDStr := r.URL.Query().Get("listId")
-		listID := uint(1)
+		tx := db.Order("id ASC")
 		if listIDStr != "" {
 			if parsed, err := strconv.ParseUint(listIDStr, 10, 64); err == nil {
-				listID = uint(parsed)
+				tx = tx.Where("list_id = ?", parsed)
 			}
 		}
-
 		var shelves []Shelf
-		db.Where("list_id = ?", listID).Order("id ASC").Find(&shelves)
+		tx.Find(&shelves)
 		writeJSON(w, http.StatusOK, shelves)
 	}
 }
@@ -652,5 +651,119 @@ func handleExport(db *gorm.DB) http.HandlerFunc {
 			})
 		}
 		writeCSV(w, rows)
+	}
+}
+
+// ── List CRUD ─────────────────────────────────────────────────────────
+
+func handleListLists(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var lists []List
+		db.Order("name ASC").Find(&lists)
+		writeJSON(w, http.StatusOK, lists)
+	}
+}
+
+func handleCreateList(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		name, ok := validName(body.Name)
+		if !ok {
+			errorJSON(w, http.StatusBadRequest, "name is required (≤ 100 chars)")
+			return
+		}
+		l := List{Name: name}
+		db.Create(&l)
+		writeJSON(w, http.StatusCreated, l)
+	}
+}
+
+func handleUpdateList(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		var list List
+		if db.First(&list, id).Error != nil {
+			errorJSON(w, http.StatusNotFound, "list not found")
+			return
+		}
+		var body struct {
+			Name *string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if body.Name == nil {
+			errorJSON(w, http.StatusBadRequest, "no valid fields to update")
+			return
+		}
+		name, ok := validName(*body.Name)
+		if !ok {
+			errorJSON(w, http.StatusBadRequest, "name must be non-empty (≤ 100 chars)")
+			return
+		}
+		db.Model(&list).Update("name", name)
+		writeJSON(w, http.StatusOK, list)
+	}
+}
+
+func handleDeleteList(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		var list List
+		if db.First(&list, id).Error != nil {
+			errorJSON(w, http.StatusNotFound, "list not found")
+			return
+		}
+
+		// Cascade delete in a transaction
+		db.Transaction(func(tx *gorm.DB) error {
+			// Find all shelves in this list
+			var shelfIDs []uint
+			tx.Model(&Shelf{}).Where("list_id = ?", id).Pluck("id", &shelfIDs)
+
+			if len(shelfIDs) > 0 {
+				// Find all items on these shelves
+				var itemIDs []uint
+				tx.Model(&ItemShelf{}).Where("shelf_id IN ?", shelfIDs).Pluck("item_id", &itemIDs)
+
+				// Delete barcodes for those items
+				if len(itemIDs) > 0 {
+					tx.Where("item_id IN ?", itemIDs).Delete(&ItemBarcode{})
+				}
+
+				// Delete ItemShelf rows
+				tx.Where("shelf_id IN ?", shelfIDs).Delete(&ItemShelf{})
+
+				// Delete items that only existed on these shelves (no remaining ItemShelf rows)
+				if len(itemIDs) > 0 {
+					tx.Where("id IN ? AND id NOT IN (SELECT item_id FROM item_shelves)", itemIDs).Delete(&Item{})
+				}
+			}
+
+			// Delete shelves
+			tx.Where("list_id = ?", id).Delete(&Shelf{})
+
+			// Delete the list
+			return tx.Delete(&list).Error
+		})
+
+		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
 }

@@ -22,6 +22,66 @@
   padding-bottom: 2rem;
 }
 
+/* ===== List Header ===== */
+.list-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.list-header h1 {
+  flex: 1;
+}
+.list-edit-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 1.2rem;
+  padding: 0 0.3rem;
+  margin-bottom: 0;
+}
+.list-select {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin-bottom: 0;
+  padding: 0.25rem 0.5rem;
+  flex: 1;
+}
+.add-list-btn {
+  display: block;
+  width: 100%;
+  background: white;
+  color: black;
+  border: 1px solid black;
+  padding: 0.6rem;
+  text-align: center;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+/* ===== Modal overlay & dialog ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-dialog {
+  display: block;
+  max-width: min(calc(100vw - 32px), 500px);
+  max-height: 90vh;
+  overflow-y: auto;
+  width: 100%;
+}
+.modal-dialog > article {
+  margin: 0 auto;
+  width: 100%;
+}
+
 /* ===== Scanner ===== */
 .scanner-viewport {
   width: 100%;
@@ -311,7 +371,8 @@
 }
 
 /* ===== BaseModal close button (replaces PicoCSS rel="prev" hack) ===== */
-dialog article header button.pico-prev {
+dialog article header button.pico-prev,
+.modal-dialog article header button.pico-prev {
   width: 1.5rem;
   height: 1.5rem;
   margin: 0;
@@ -320,10 +381,11 @@ dialog article header button.pico-prev {
   border: none;
   font-size: 1.25rem;
   line-height: 1;
-  color: var(--pico-muted-color);
+  color: var(--pico-secondary-background);
   cursor: pointer;
 }
-dialog article header button.pico-prev::before {
+dialog article header button.pico-prev::before,
+.modal-dialog article header button.pico-prev::before {
   content: "×";
   display: block;
 }

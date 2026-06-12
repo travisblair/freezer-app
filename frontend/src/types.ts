@@ -25,6 +25,11 @@ export interface Shelf {
   listId: number;
 }
 
+export interface List {
+  id: number;
+  name: string;
+}
+
 export interface ApiError extends Error {
   status?: number;
   error?: string;

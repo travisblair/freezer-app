@@ -139,6 +139,12 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	mux.Handle("PATCH /api/shelf/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleUpdateShelf(db))))))
 	mux.Handle("DELETE /api/shelf/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleDeleteShelf(db))))))
 
+	// List endpoints
+	mux.Handle("GET /api/lists", requireAuth(db, http.HandlerFunc(handleListLists(db))))
+	mux.Handle("POST /api/lists", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleCreateList(db))))))
+	mux.Handle("PATCH /api/lists/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleUpdateList(db))))))
+	mux.Handle("DELETE /api/lists/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleDeleteList(db))))))
+
 	// ItemShelf endpoints
 	mux.Handle("PATCH /api/item-shelf/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleSetShelfCount(db))))))
 	mux.Handle("POST /api/item-shelf/move", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleMoveItem(db))))))

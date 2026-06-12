@@ -1161,3 +1161,136 @@ func TestSearchRejectsLongQuery(t *testing.T) {
 		t.Fatalf("expected 400 for long search query, got %d", resp2.StatusCode)
 	}
 }
+
+// ── List tests ────────────────────────────────────────────────────────
+
+func TestListCRUD(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Create
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{
+		"name": "Pantry",
+	}, true)
+	if resp.StatusCode != 201 {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var list List
+	decodeJSON(t, resp, &list)
+	if list.Name != "Pantry" {
+		t.Fatalf("expected Pantry, got %s", list.Name)
+	}
+
+	// List all
+	req, _ := http.NewRequest("GET", ts.URL+"/api/lists", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var lists []List
+	decodeJSON(t, resp, &lists)
+	if len(lists) < 2 { // "Freezer" seed + "Pantry"
+		t.Fatalf("expected at least 2 lists, got %d", len(lists))
+	}
+
+	// Rename
+	resp = doJSON(t, ts, "PATCH", fmt.Sprintf("/api/lists/%d", list.ID), map[string]interface{}{
+		"name": "Kitchen",
+	}, true)
+	var updated List
+	decodeJSON(t, resp, &updated)
+	if updated.Name != "Kitchen" {
+		t.Fatalf("expected Kitchen, got %s", updated.Name)
+	}
+
+	// Delete
+	resp = doJSON(t, ts, "DELETE", fmt.Sprintf("/api/lists/%d", list.ID), nil, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeleteListCascades(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Create list
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{
+		"name": "ToDelete",
+	}, true)
+	var list List
+	decodeJSON(t, resp, &list)
+
+	// Create shelf on this list
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Shelf A", "listId": list.ID,
+	}, true)
+	var shelf Shelf
+	decodeJSON(t, resp, &shelf)
+
+	// Create item on that shelf
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Doomed", "quantity": 3, "shelfId": shelf.ID,
+	}, true)
+	var item Item
+	decodeJSON(t, resp, &item)
+
+	// Delete list
+	resp = doJSON(t, ts, "DELETE", fmt.Sprintf("/api/lists/%d", list.ID), nil, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Verify shelf gone
+	resp = doJSON(t, ts, "GET", fmt.Sprintf("/api/shelves?listId=%d", list.ID), nil, true)
+	var shelves []Shelf
+	decodeJSON(t, resp, &shelves)
+	if len(shelves) != 0 {
+		t.Fatalf("expected 0 shelves, got %d", len(shelves))
+	}
+
+	// Verify item unreachable via barcode (we created it without a barcode,
+	// but the item should be deleted since it only existed on this shelf)
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var items []Item
+	decodeJSON(t, resp, &items)
+	for _, i := range items {
+		if i.ID == item.ID {
+			t.Fatal("item should be deleted")
+		}
+	}
+}
+
+func TestListScoping(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Create a second list
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{
+		"name": "Pantry",
+	}, true)
+	var pantry List
+	decodeJSON(t, resp, &pantry)
+
+	// Create shelf on Pantry
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Pantry Shelf", "listId": pantry.ID,
+	}, true)
+
+	// Create item on Freezer (list 1)
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Ice Cream", "quantity": 2, "shelfId": 1,
+	}, true)
+
+	// Verify shelves for Freezer only
+	req, _ := http.NewRequest("GET", ts.URL+"/api/shelves?listId=1", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var shelves []Shelf
+	decodeJSON(t, resp, &shelves)
+	for _, s := range shelves {
+		if s.ListID != 1 {
+			t.Fatalf("expected list 1 only, got shelf on list %d", s.ListID)
+		}
+	}
+}

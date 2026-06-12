@@ -146,6 +146,10 @@ export const api = {
     return request(`/shelves${params}`) as Promise<Shelf[]>;
   },
 
+  allShelves(): Promise<Shelf[]> {
+    return request("/shelves") as Promise<Shelf[]>;
+  },
+
   createShelf(name: string, listId?: number): Promise<Shelf> {
     return request("/shelves", {
       method: "POST",
@@ -176,5 +180,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ itemId, sourceShelfId, targetShelfId, quantity }),
     });
+  },
+
+  // ── Lists ───────────────────────────────────────────────────────────
+
+  getLists(): Promise<import("./types").List[]> {
+    return request("/lists") as Promise<import("./types").List[]>;
+  },
+
+  createList(name: string): Promise<unknown> {
+    return request("/lists", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  updateList(id: number, name: string): Promise<unknown> {
+    return request(`/lists/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  deleteList(id: number): Promise<unknown> {
+    return request(`/lists/${id}`, { method: "DELETE" });
   },
 };

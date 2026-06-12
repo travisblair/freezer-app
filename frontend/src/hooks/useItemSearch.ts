@@ -1,30 +1,29 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { api } from "../api";
-import type { Shelf } from "../types";
+import type { Shelf, List } from "../types";
 import {
   setItems,
   searchQuery, setSearchQuery,
   showOutOfStock,
   itemsVersion,
+  currentListId,
+  setLists,
 } from "../store";
 import { SEARCH_DEBOUNCE_MS } from "../constants";
 
 export interface ItemSearchControls {
   loading: () => boolean;
   shelves: () => Shelf[];
+  lists: () => List[];
   handleSearchInput: (e: InputEvent) => void;
   loadItems: () => Promise<void>;
 }
 
-/**
- * Debounced search + auto-refetch when filters change.
- * Also loads shelves alongside items so the grouped table never
- * shows an empty state due to a race condition.
- */
 export function useItemSearch(): ItemSearchControls {
   const [loading, setLoading] = createSignal(false);
   const [debouncedSearch, setDebouncedSearch] = createSignal("");
   const [shelves, setShelves] = createSignal<Shelf[]>([]);
+  const [lists, setListsLocal] = createSignal<List[]>([]);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function handleSearchInput(e: InputEvent) {
@@ -38,10 +37,20 @@ export function useItemSearch(): ItemSearchControls {
 
   async function loadShelves() {
     try {
-      const data = await api.getShelves(1);
+      const data = await api.getShelves(currentListId());
       setShelves(data);
     } catch (err) {
       if (import.meta.env.DEV) console.error("Failed to load shelves", err);
+    }
+  }
+
+  async function loadLists() {
+    try {
+      const data = await api.getLists();
+      setListsLocal(data);
+      setLists(data);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error("Failed to load lists", err);
     }
   }
 
@@ -50,7 +59,7 @@ export function useItemSearch(): ItemSearchControls {
     try {
       const [itemData, _] = await Promise.all([
         api.getItems(showOutOfStock(), debouncedSearch()),
-        loadShelves(),
+        Promise.all([loadShelves(), loadLists()]),
       ]);
       setItems(itemData);
     } catch (err) {
@@ -64,6 +73,7 @@ export function useItemSearch(): ItemSearchControls {
     showOutOfStock();
     debouncedSearch();
     itemsVersion();
+    currentListId();
     loadItems();
   });
 
@@ -71,5 +81,5 @@ export function useItemSearch(): ItemSearchControls {
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
-  return { loading, shelves, handleSearchInput, loadItems };
+  return { loading, shelves, lists, handleSearchInput, loadItems };
 }

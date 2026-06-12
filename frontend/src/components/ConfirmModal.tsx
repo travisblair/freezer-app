@@ -8,32 +8,19 @@ interface Props {
 }
 
 export default function ConfirmModal(props: Props) {
-  let dialogEl: HTMLDialogElement | undefined;
-
-  function handleCancel() {
-    if (dialogEl) dialogEl.close();
-    props.onCancel();
-  }
-
-  function handleConfirm() {
-    if (dialogEl) dialogEl.close();
-    props.onConfirm();
-  }
-
   return (
     <BaseModal
       title="Confirm"
       onClose={props.onCancel}
-      dialogRef={(el) => { dialogEl = el; }}
       footer={
         <>
-          <button type="button" class="secondary" onClick={handleCancel}>
+          <button type="button" class="secondary" onClick={props.onCancel}>
             Cancel
           </button>
           <button
             type="button"
             class={props.variant === "danger" ? "danger-confirm" : ""}
-            onClick={handleConfirm}
+            onClick={props.onConfirm}
           >
             {props.variant === "danger" ? "Delete Forever" : "Confirm"}
           </button>

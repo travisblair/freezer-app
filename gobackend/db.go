@@ -61,9 +61,12 @@ func OpenDB() *gorm.DB {
 
 	// Auto-migrate models. GORM creates tables if they don't exist
 	// and adds missing columns. Existing data is never dropped.
-	if err := db.AutoMigrate(&Item{}, &ItemBarcode{}, &Shelf{}, &ItemShelf{}, &User{}); err != nil {
+	if err := db.AutoMigrate(&Item{}, &ItemBarcode{}, &Shelf{}, &ItemShelf{}, &User{}, &List{}); err != nil {
 		GetLogger().Fatal("auto-migration failed: %v", err)
 	}
+
+	// ── Seed default list ────────────────────────────────────────────────
+	db.FirstOrCreate(&List{}, List{Name: "Freezer"})
 
 	// ── Data migration: existing items → Shelf 1 ──────────────────────────
 	// Ensure "Shelf 1" exists (default shelf, scoped to list 1 = Freezer)

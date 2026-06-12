@@ -1,4 +1,4 @@
-import { onMount, onCleanup, type JSX } from "solid-js";
+import type { JSX } from "solid-js";
 
 interface Props {
   title: string;
@@ -8,51 +8,26 @@ interface Props {
   dialogRef?: (el: HTMLDialogElement) => void;
 }
 
-/**
- * Reusable modal wrapper.
- * Handles dialog lifecycle (show/close on mount/cleanup).
- * Only fires onClose once per dismissal action.
- */
 export default function BaseModal(props: Props) {
-  let dialogRef: HTMLDialogElement | undefined;
-
-  onMount(() => {
-    if (dialogRef) {
-      dialogRef.showModal();
-      props.dialogRef?.(dialogRef);
-    }
-  });
-
-  function close() {
-    if (dialogRef) dialogRef.close();
-  }
-
-  onCleanup(() => {
-    // Cleanup fires props.onClose through the native onClose handler
-    if (dialogRef && dialogRef.open) {
-      dialogRef.close();
-    }
-  });
-
   return (
-    <dialog ref={dialogRef} onClose={props.onClose}>
-      <article>
-        <header>
-          <button
-            type="button"
-            aria-label="Close"
-            class="pico-prev"
-            onClick={close}
-          />
-          <p>
+    <div class="modal-overlay" onClick={props.onClose}>
+      <div class="modal-dialog" onClick={e => e.stopPropagation()}>
+        <article>
+          <header style="display:flex;align-items:center;justify-content:space-between">
             <strong>{props.title}</strong>
-          </p>
-        </header>
+            <button
+              type="button"
+              aria-label="Close"
+              class="pico-prev"
+              onClick={props.onClose}
+            />
+          </header>
 
-        {props.children}
+          {props.children}
 
-        {props.footer && <footer>{props.footer}</footer>}
-      </article>
-    </dialog>
+          {props.footer && <footer style="display:flex;gap:8px;justify-content:flex-end">{props.footer}</footer>}
+        </article>
+      </div>
+    </div>
   );
 }

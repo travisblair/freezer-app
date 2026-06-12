@@ -5,6 +5,7 @@ import { api } from "../api";
 import {
   items, searchQuery, showOutOfStock, setShowOutOfStock,
   selectedIds, selectedSet, toggleSelect, selectAll, clearSelection,
+  currentListId, setCurrentListId, setLists,
 } from "../store";
 import { useItemSearch } from "../hooks/useItemSearch";
 import { useItemActions } from "../hooks/useItemActions";
@@ -14,7 +15,7 @@ import EditModal from "./EditModal";
 type ShelfMap = Map<number, Map<number, number>>;
 
 export default function ItemTable() {
-  const { loading, shelves, handleSearchInput, loadItems } = useItemSearch();
+  const { loading, shelves, lists, handleSearchInput, loadItems } = useItemSearch();
   const a = useItemActions();
 
   const [selShelf, setSelShelf] = createSignal<number | null>(null);
@@ -78,6 +79,9 @@ export default function ItemTable() {
 
   const otherShelves = () => shelves().filter(s => s.id !== (moveState()?.shelfId ?? 0));
   const moveTargetInit = () => otherShelves()[0]?.id ?? 1;
+
+  // All shelves for cross-list move
+  const [allShelvesList, setAllShelvesList] = createSignal<Shelf[]>([]);
 
   async function doMove() {
     const ms = moveState();
@@ -277,31 +281,51 @@ export default function ItemTable() {
           const ms = moveState()!;
           setMoveTarget(moveTargetInit());
           setMoveQty(ms.count);
+          api.allShelves().then(setAllShelvesList).catch(() => {});
           return (
-            <dialog open>
+            <>
+              <div class="modal-overlay" onClick={() => setMoveState(null)}>
+                <div class="modal-dialog" onClick={e => e.stopPropagation()}>
               <article>
-                <header>
-                  <button class="pico-prev" onClick={() => setMoveState(null)} />
+                <header style="display:flex;align-items:center;justify-content:space-between">
                   <strong>Move {ms.item.name}</strong>
+                  <button class="pico-prev" onClick={() => setMoveState(null)} />
                 </header>
                 <label>
                   To shelf
                   <select value={String(moveTarget())} onChange={e => setMoveTarget(Number((e.target as HTMLSelectElement).value))}>
-                    {shelves().filter(s => s.id !== ms.shelfId).map(s => (
-                      <option value={String(s.id)}>{s.name}</option>
-                    ))}
+                    {(() => {
+                      const allS = allShelvesList().filter(s => s.id !== ms.shelfId);
+                      // Group by list
+                      const listMap = new Map<number, { name: string; shelves: typeof allS }>();
+                      for (const s of allS) {
+                        const ln = lists().find(l => l.id === s.listId);
+                        const key = s.listId;
+                        if (!listMap.has(key)) listMap.set(key, { name: ln?.name || `List ${key}`, shelves: [] });
+                        listMap.get(key)!.shelves.push(s);
+                      }
+                      return [...listMap.entries()].map(([listId, g]) => (
+                        <optgroup label={g.name}>
+                          {g.shelves.map(s => (
+                            <option value={String(s.id)}>{s.name}</option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
                   </select>
                 </label>
                 <label>
                   Quantity
                   <input type="number" min="1" max="9999" value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 1); }} style="width:5rem" />
                 </label>
-                <footer>
+                <footer style="display:flex;gap:8px;justify-content:flex-end">
                   <button type="button" class="secondary" onClick={() => setMoveState(null)}>Cancel</button>
                   <button type="button" onClick={doMove}>Save</button>
                 </footer>
               </article>
-            </dialog>
+              </div>
+              </div>
+            </>
           );
         })()}
       </Show>

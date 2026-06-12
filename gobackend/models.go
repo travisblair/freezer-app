@@ -50,3 +50,11 @@ type User struct {
 	PasswordHash string `gorm:"not null" json:"-"`
 	SessionToken string `gorm:"index" json:"-"`
 }
+
+// List represents a named inventory list (Freezer, Pantry, Kitchen, etc.).
+type List struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Name      string    `gorm:"not null" json:"name"`
+}
