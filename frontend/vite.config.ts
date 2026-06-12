@@ -23,8 +23,10 @@ export default defineConfig({
     resolve: {
       conditions: ["browser", "development"],
     },
-    alias: {
-      "solid-js/web": "solid-js/web/dist/web.js",
+    server: {
+      deps: {
+        inline: ["solid-js"],
+      },
     },
   },
 });
