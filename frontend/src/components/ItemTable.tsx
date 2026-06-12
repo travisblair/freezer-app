@@ -227,10 +227,10 @@ export default function ItemTable() {
                             <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); toggleKebab(rowKey); }}>⋮</button>
                             <Show when={openKebab() === rowKey}>
                               <div class="kebab-menu">
-                                <div class="kebab-item" onClick={() => { setOpenKebab(0); a.setEditingItem(item); }}>Edit</div>
-                                <div class="kebab-item" onClick={() => { setOpenKebab(0); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
-                                <Show when={!oos}><div class="kebab-item danger" onClick={() => { setOpenKebab(0); a.handleHardDelete(item); }}>Delete</div></Show>
-                                <Show when={oos}><div class="kebab-item" onClick={() => { setOpenKebab(0); a.handleRestore(item); }}>Restore</div></Show>
+                                <div class="kebab-item" onMouseDown={() => { setOpenKebab(0); a.setEditingItem(item); }}>Edit</div>
+                                <div class="kebab-item" onMouseDown={() => { setOpenKebab(0); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
+                                <Show when={!oos}><div class="kebab-item danger" onMouseDown={() => { setOpenKebab(0); a.handleHardDelete(item); }}>Delete</div></Show>
+                                <Show when={oos}><div class="kebab-item" onMouseDown={() => { setOpenKebab(0); a.handleRestore(item); }}>Restore</div></Show>
                               </div>
                             </Show>
                           </td>
