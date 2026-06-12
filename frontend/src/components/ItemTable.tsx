@@ -15,7 +15,7 @@ import EditModal from "./EditModal";
 type ShelfMap = Map<number, Map<number, number>>;
 
 export default function ItemTable() {
-  const { loading, shelves, lists, handleSearchInput, loadItems } = useItemSearch();
+  const { loading, shelves, lists, allShelves, handleSearchInput, loadItems } = useItemSearch();
   const a = useItemActions();
 
   const [selShelf, setSelShelf] = createSignal<number | null>(null);
@@ -79,9 +79,6 @@ export default function ItemTable() {
 
   const otherShelves = () => shelves().filter(s => s.id !== (moveState()?.shelfId ?? 0));
   const moveTargetInit = () => otherShelves()[0]?.id ?? 1;
-
-  // All shelves for cross-list move
-  const [allShelvesList, setAllShelvesList] = createSignal<Shelf[]>([]);
 
   async function doMove() {
     const ms = moveState();
@@ -237,10 +234,10 @@ export default function ItemTable() {
                             <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); setMenuOpen(menuOpen() === rowKey ? null : rowKey); }}>⋮</button>
                             <Show when={menuOpen() === rowKey}>
                               <div class="kebab-menu">
-                                <div class="kebab-item" onClick={() => { setMenuOpen(null); a.setEditingItem(item); }}>Edit</div>
-                                <div class="kebab-item" onClick={() => { setMenuOpen(null); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
-                                <Show when={!oos}><div class="kebab-item danger" onClick={() => { setMenuOpen(null); a.handleHardDelete(item); }}>Delete</div></Show>
-                                <Show when={oos}><div class="kebab-item" onClick={() => { setMenuOpen(null); a.handleRestore(item); }}>Restore</div></Show>
+                                <div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.setEditingItem(item), 0); }}>Edit</div>
+                                <div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => setMoveState({ item, shelfId: shelf.id, count }), 0); }}>Move</div>
+                                <Show when={!oos}><div class="kebab-item danger" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.handleHardDelete(item), 0); }}>Delete</div></Show>
+                                <Show when={oos}><div class="kebab-item" onMouseDown={() => { setMenuOpen(null); setTimeout(() => a.handleRestore(item), 0); }}>Restore</div></Show>
                               </div>
                             </Show>
                           </td>
@@ -281,7 +278,6 @@ export default function ItemTable() {
           const ms = moveState()!;
           setMoveTarget(moveTargetInit());
           setMoveQty(ms.count);
-          api.allShelves().then(setAllShelvesList).catch(() => {});
           return (
             <>
               <div class="modal-overlay" onClick={() => setMoveState(null)}>
@@ -295,7 +291,7 @@ export default function ItemTable() {
                   To shelf
                   <select value={String(moveTarget())} onChange={e => setMoveTarget(Number((e.target as HTMLSelectElement).value))}>
                     {(() => {
-                      const allS = allShelvesList().filter(s => s.id !== ms.shelfId);
+                      const allS = allShelves().filter(s => s.id !== ms.shelfId);
                       // Group by list
                       const listMap = new Map<number, { name: string; shelves: typeof allS }>();
                       for (const s of allS) {

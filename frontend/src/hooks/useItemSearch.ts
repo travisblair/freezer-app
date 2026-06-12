@@ -15,6 +15,7 @@ export interface ItemSearchControls {
   loading: () => boolean;
   shelves: () => Shelf[];
   lists: () => List[];
+  allShelves: () => Shelf[];
   handleSearchInput: (e: InputEvent) => void;
   loadItems: () => Promise<void>;
 }
@@ -24,6 +25,7 @@ export function useItemSearch(): ItemSearchControls {
   const [debouncedSearch, setDebouncedSearch] = createSignal("");
   const [shelves, setShelves] = createSignal<Shelf[]>([]);
   const [lists, setListsLocal] = createSignal<List[]>([]);
+  const [allShelves, setAllShelves] = createSignal<Shelf[]>([]);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function handleSearchInput(e: InputEvent) {
@@ -44,6 +46,15 @@ export function useItemSearch(): ItemSearchControls {
     }
   }
 
+  async function loadAllShelves() {
+    try {
+      const data = await api.allShelves();
+      setAllShelves(data);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error("Failed to load all shelves", err);
+    }
+  }
+
   async function loadLists() {
     try {
       const data = await api.getLists();
@@ -59,7 +70,7 @@ export function useItemSearch(): ItemSearchControls {
     try {
       const [itemData, _] = await Promise.all([
         api.getItems(showOutOfStock(), debouncedSearch()),
-        Promise.all([loadShelves(), loadLists()]),
+        Promise.all([loadShelves(), loadLists(), loadAllShelves()]),
       ]);
       setItems(itemData);
     } catch (err) {
@@ -81,5 +92,5 @@ export function useItemSearch(): ItemSearchControls {
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
-  return { loading, shelves, lists, handleSearchInput, loadItems };
+  return { loading, shelves, lists, allShelves, handleSearchInput, loadItems };
 }
