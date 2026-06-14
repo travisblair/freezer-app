@@ -148,16 +148,16 @@ export default function ItemTable() {
         <p class="center-text">No items found.</p>
       </Show>
 
-      <Show when={items().length > 0 && shelves().length > 0}>
+      <Show when={shelves().length > 0}>
         {vs().map((shelf: Shelf) => {
           const si = getItems(shelf.id, smap());
           const isCollapsed = collapsed().has(shelf.id);
-          const autoHide = selShelf() === null && si.every(x => x.count === 0);
-          const hidden = isCollapsed || autoHide;
+          const visible = si.filter(x => showOutOfStock() || x.count > 0);
+          const hidden = isCollapsed;
 
           return (
             <div class="shelf-section">
-              <div class="shelf-header" onClick={() => toggle(shelf.id)}>
+              <div class="shelf-header" onMouseDown={() => toggle(shelf.id)}>
                 <span class="shelf-toggle">{hidden ? "\u25b6" : "\u25bc"}</span>
                 <span class="shelf-name">
                   {renameId() === shelf.id ? (
@@ -169,13 +169,15 @@ export default function ItemTable() {
                     </span>
                   ) : shelf.name}
                 </span>
-                <span class="shelf-count">({si.length} items)</span>
+                <span class="shelf-count">({visible.length} items)</span>
                 <div class="shelf-actions">
-                  <button type="button" class="outline small-action" onClick={e2 => { e2.stopPropagation(); setRenameId(shelf.id); setRenameVal(shelf.name); }}>✏️</button>
-                  {shelf.id !== 1 && <button type="button" class="outline small-action" onClick={e2 => { e2.stopPropagation(); delShelf(shelf.id); }}>🗑️</button>}
+                  <button type="button" class="outline small-action" onMouseDown={e2 => { e2.stopPropagation(); setRenameId(shelf.id); setRenameVal(shelf.name); }}>✏️</button>
+                  {shelf.id !== 1 && <button type="button" class="outline small-action" onMouseDown={e2 => { e2.stopPropagation(); delShelf(shelf.id); }}>🗑️</button>}
                 </div>
               </div>
               <Show when={!hidden}>
+                <Show when={visible.length > 0}
+                  fallback={<p class="center-text">No items available</p>}>
                 <table class="shelf-table">
                   <tbody>
                     <For each={si}>
@@ -239,6 +241,7 @@ export default function ItemTable() {
                     }}</For>
                   </tbody>
                 </table>
+                </Show>
               </Show>
             </div>
           );

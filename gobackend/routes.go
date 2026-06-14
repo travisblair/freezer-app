@@ -156,6 +156,7 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := filepath.Join(frontendDist, r.URL.Path)
 			if _, err := os.Stat(path); os.IsNotExist(err) && !strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, filepath.Join(frontendDist, "index.html"))
 				return
 			}

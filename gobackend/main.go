@@ -73,13 +73,34 @@ func main() {
 	}
 
 	// Systemd watchdog integration
-	go startWatchdog(stop)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Watchdog goroutine panicked: %v", r)
+			}
+		}()
+		startWatchdog(stop)
+	}()
 
 	// Heartbeat alerts (every 6 hours, first after 5 minutes)
-	go StartHeartbeat(stop, heartbeatStatus)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Heartbeat goroutine panicked: %v", r)
+			}
+		}()
+		StartHeartbeat(stop, heartbeatStatus)
+	}()
 
 	// Auth rate-limit map cleanup (prevents unbounded memory growth)
-	go authCleanup()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Auth cleanup goroutine panicked: %v", r)
+			}
+		}()
+		authCleanup()
+	}()
 
 	// Track startup time for heartbeat
 	startupTime = time.Now()

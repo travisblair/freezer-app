@@ -395,9 +395,15 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Where("item_id = ?", id).Delete(&ItemShelf{})
-		db.Where("item_id = ?", id).Delete(&ItemBarcode{})
-		db.Delete(&item)
+		db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("item_id = ?", id).Delete(&ItemShelf{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("item_id = ?", id).Delete(&ItemBarcode{}).Error; err != nil {
+				return err
+			}
+			return tx.Delete(&item).Error
+		})
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": true,
 			"hard":    true,

@@ -5,7 +5,6 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -153,69 +152,6 @@ func StartHeartbeat(stop <-chan os.Signal, getStatus func() string) {
 }
 
 // ── Log tail helper ─────────────────────────────────────────────────────
-
-// tailOfLogFile returns the last ~1500 bytes of the server log file.
-// This gives context about what was happening before the crash.
-func tailOfLogFile() string {
-	logFile := os.Getenv("LOG_FILE")
-	if logFile == "" {
-		// Match the default in logging.go
-		logFile = "/tmp/server.log"
-	}
-
-	f, err := os.Open(logFile)
-	if err != nil {
-		return "(log file not readable)"
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return "(log file not readable)"
-	}
-
-	const tailBytes = 2000
-	offset := info.Size() - tailBytes
-	if offset < 0 {
-		offset = 0
-	}
-
-	buf := make([]byte, info.Size()-offset)
-	if _, err := f.ReadAt(buf, offset); err != nil {
-		return "(failed to read log)"
-	}
-
-	result := string(buf)
-	// Strip lines that may contain secrets before sending via email.
-	result = redactSecrets(result)
-	// Truncate at a reasonable length for an email
-	if len(result) > 1500 {
-		result = result[len(result)-1500:]
-	}
-	if result == "" {
-		return "(log was empty)"
-	}
-	return result
-}
-
-// redactSecrets strips lines containing common secret patterns from log output
-// to prevent accidental exposure via crash alerts.
-func redactSecrets(s string) string {
-	lines := strings.Split(s, "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "password") ||
-			strings.Contains(lower, "secret") ||
-			strings.Contains(lower, "authorization") ||
-			strings.Contains(lower, "alert_app_password") ||
-			strings.Contains(lower, "smtp") {
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	return strings.Join(filtered, "\n")
-}
 
 // logLocation returns where the server log is written (for crash alert context).
 func logLocation() string {
