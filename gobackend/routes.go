@@ -256,6 +256,8 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Tarpit known scanner paths before anything else
 			if scannerProbes[r.URL.Path] {
+				GetLogger().Info("🪤 TARPIT | %s | %s | UA=%s",
+					r.URL.Path, r.RemoteAddr, truncate(r.UserAgent(), 80))
 				serveTarpit(w, r)
 				return
 			}
