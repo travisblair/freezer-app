@@ -338,6 +338,14 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Flush delegates to the underlying ResponseWriter if it supports
+// http.Flusher (needed for streaming/chunked responses).
+func (rw *responseWriter) Flush() {
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 // ── Request logging middleware ──────────────────────────────────────────
 
 // requestLoggingMiddleware logs every HTTP request: method, path, status, duration, remote addr.

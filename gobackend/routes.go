@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -84,6 +85,104 @@ func clientIP(r *http.Request) string {
 	return ip
 }
 
+// ── Scanner tarpit ──────────────────────────────────────────────────────
+//
+// Automated scanners probe for .env, .git/config, wp-admin, and similar
+// paths.  Instead of serving a 200 (SPA fallback) or 404, we stream a slow
+// JSON response that ties up their connection for up to 10 minutes.
+//
+// Resource caps (Pi Zero safe):
+//   - 5 concurrent tarpit connections (buffered channel semaphore)
+//   - 512 bytes flushed every 1s
+//   - Max 10 minutes per connection
+//   - ~300 KB per connection, ~1.5 MB worst-case total
+//   - When all slots are full, new probes get nothing (connection hangs)
+
+var tarpitSlots = make(chan struct{}, 5)
+
+// scannerProbes are paths that automated vulnerability scanners commonly
+// probe.  Add more as you discover them in the logs.
+var scannerProbes = map[string]bool{
+	"/.env":             true,
+	"/.env.backup":      true,
+	"/.env.bak":         true,
+	"/.env.local":       true,
+	"/.env.production":  true,
+	"/.env.development": true,
+	"/.git/config":      true,
+	"/.git/HEAD":        true,
+	"/wp-admin":         true,
+	"/wp-admin/":        true,
+	"/wp-login.php":     true,
+	"/admin":            true,
+	"/admin/":           true,
+	"/phpmyadmin":       true,
+	"/phpMyAdmin":       true,
+	"/.aws/credentials": true,
+	"/.ssh/id_rsa":      true,
+	"/config.json":      true,
+	"/backup":           true,
+	"/backup/":          true,
+	"/.dockerenv":       true,
+	"/actuator/health":  true,
+	"/.vscode/sftp.json": true,
+}
+
+// serveTarpit streams a slow JSON response to waste a scanner's time.
+// Callers should check scannerProbes before invoking — this does not
+// re-check.
+func serveTarpit(w http.ResponseWriter, r *http.Request) {
+	// Claim a slot.  If none available, return without writing anything —
+	// the scanner's connection hangs until their timeout fires.
+	select {
+	case tarpitSlots <- struct{}{}:
+		defer func() { <-tarpitSlots }()
+	default:
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// No streaming support (HTTP/1.0 or proxy).  Fall back to
+		// a single large JSON array — still wasteful for scanners
+		// but won't hold a connection open.
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		for i := 0; i < 600; i++ {
+			fmt.Fprintf(w,
+				`{"status":"ok","config":{"env":"production","debug":false,"version":"%d.%d.%d","node":"%s"},"timestamp":"%s"}`+"\n",
+				i/100, i%100, i,
+				r.RemoteAddr,
+				time.Now().UTC().Format(time.RFC3339Nano),
+			)
+		}
+		fmt.Fprintf(w, `{"status":"ok","complete":true}`+"\n")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	deadline := time.Now().Add(10 * time.Minute)
+	chunk := 0
+	for time.Now().Before(deadline) {
+		chunk++
+		payload := fmt.Sprintf(
+			`{"status":"ok","config":{"env":"production","debug":false,"version":"%d.%d.%d","node":"%s"},"timestamp":"%s"}`+"\n",
+			chunk/100, chunk%100, chunk,
+			r.RemoteAddr,
+			time.Now().UTC().Format(time.RFC3339Nano),
+		)
+		w.Write([]byte(payload))
+		flusher.Flush()
+		time.Sleep(1 * time.Second)
+	}
+	// Graceful close — scanner thinks the transfer completed
+	fmt.Fprintf(w, `{"status":"ok","complete":true}`+"\n")
+	flusher.Flush()
+}
+
 // clearRateLimiters resets all rate limiter state. Used in tests to prevent
 // cross-test contamination from the shared per-IP token buckets.
 func clearRateLimiters() {
@@ -149,12 +248,22 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	mux.Handle("PATCH /api/item-shelf/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleSetShelfCount(db))))))
 	mux.Handle("POST /api/item-shelf/move", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleMoveItem(db))))))
 
-	// Serve static frontend build (SPA fallback)
+	// Serve static frontend build (SPA fallback).
+	// Scanner probes for .env, .git, wp-admin etc. get the tarpit.
 	frontendDist := findFrontendDist()
 	if dist, err := os.Stat(frontendDist); err == nil && dist.IsDir() {
 		fs := http.FileServer(http.Dir(frontendDist))
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path := filepath.Join(frontendDist, r.URL.Path)
+			// Tarpit known scanner paths before anything else
+			if scannerProbes[r.URL.Path] {
+				serveTarpit(w, r)
+				return
+			}
+
+			// Strip leading / so filepath.Join doesn't treat
+			// r.URL.Path as absolute and drop frontendDist.
+			relPath := strings.TrimPrefix(r.URL.Path, "/")
+			path := filepath.Join(frontendDist, relPath)
 			if _, err := os.Stat(path); os.IsNotExist(err) && !strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, filepath.Join(frontendDist, "index.html"))
