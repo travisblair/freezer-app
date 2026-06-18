@@ -100,47 +100,6 @@ func clientIP(r *http.Request) string {
 
 var tarpitSlots = make(chan struct{}, 5)
 
-// nedryArt is the Jurassic Park "magic word" scene in ASCII art.
-// Based on the iconic shot: sweaty, glasses, Hawaiian shirt, at his terminal.
-// Injected into the tarpit stream every 120 chunks (~2 minutes).
-const nedryArt = `
-                         .-=============-.
-                      .-'  YOU DIDN'T SAY  '-.
-                     /     THE MAGIC WORD!    \
-                    /                          \
-                   |    ┌──────────────────┐    |
-                   |    │  ACCESS DENIED   │    |
-                   |    │  SYSTEM LOCKED   │    |
-                   |    └──────────────────┘    |
-                    \         _.._             /
-                     \     .-'    '-.         /
-                      '._ /  O    O  \     _.'
-                         |     ^      |   |
-                         |    \_/     |   |
-                         |  .-'^'-.   |   |
-                         |  |     |   |   |
-                         |   \___/    |   |
-                         |   (   )    |   |
-                         |    ) (     |   |
-                         |  .'   '.   |   |
-                         |  |     |   |   |
-                        /   |     |    \  \
-                  _____/____|_____|_____\__\_____
-                 |  _  _  _|_ _ _|_ _ _|_ _ _  |
-                 | |_||_||_||_||_||_||_||_||_| |
-                 |  _  _  _|_ _ _|_ _ _|_ _ _  |
-                 | |_||_||_||_||_||_||_||_||_| |
-                 |  _  _  _|_ _ _|_ _ _|_ _ _  |
-                 |_|_||_||_||_||_||_||_||_||_|_|
-                 |                             |
-                 |    ┌─────────────────────┐   |
-                 |    │  AH  AH  AH!        │   |
-                 |    │  YOU DIDN'T SAY     │   |
-                 |    │  THE MAGIC WORD!    │   |
-                 |    └─────────────────────┘   |
-                 |_____________________________|
-`
-
 // scannerProbes are paths that automated vulnerability scanners commonly
 // probe.  Add more as you discover them in the logs.
 var scannerProbes = map[string]bool{
@@ -197,8 +156,6 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 				time.Now().UTC().Format(time.RFC3339Nano),
 			)
 		}
-		// Slip the art in — they're getting a dump anyway
-		w.Write([]byte(nedryArt))
 		fmt.Fprintf(w, `{"status":"ok","complete":true}`+"\n")
 		return
 	}
@@ -219,14 +176,6 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 		)
 		w.Write([]byte(payload))
 		flusher.Flush()
-
-		// Every 120 chunks (~2 min), inject the Nedry ASCII art.
-		// Breaks their JSON parser — they'll see it raw.
-		if chunk%120 == 0 {
-			w.Write([]byte(nedryArt))
-			flusher.Flush()
-		}
-
 		time.Sleep(1 * time.Second)
 	}
 	// Graceful close — scanner thinks the transfer completed
