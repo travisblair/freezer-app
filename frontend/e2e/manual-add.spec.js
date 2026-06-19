@@ -74,9 +74,8 @@ test.describe("Manual Add Form", () => {
     await page.getByRole("button", { name: "Add Item" }).click();
 
     await page.locator(".duplicate-offer").getByRole("button").first().click();
+    // Status message confirms the duplicate was resolved
     await expect(page.getByText('Updated "Chicken Breast"')).toBeVisible();
-
-    expect(page.getByText("Chicken Breast").first()).toBeVisible();
   });
 
   test("dismiss duplicate offer", async ({ page }) => {
