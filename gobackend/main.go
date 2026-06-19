@@ -220,6 +220,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func trustedOrigin(origin string) bool {
+	// If TRUSTED_ORIGIN is set, ONLY that exact origin is allowed.
+	// This pins CORS to your specific Tailscale Funnel hostname instead
+	// of trusting every *.ts.net domain.
+	if trusted := os.Getenv("TRUSTED_ORIGIN"); trusted != "" {
+		return origin == trusted
+	}
+
 	// Local dev (must match exact host:port pattern to prevent prefix confusion)
 	if origin == "http://localhost" ||
 		strings.HasPrefix(origin, "http://localhost:") ||
@@ -237,14 +244,12 @@ func trustedOrigin(origin string) bool {
 		}
 	}
 	// Tailscale Funnel — only allow the exact suffix .ts.net
-	// Log a warning for unexpected .ts.net origins (any Tailscale user can
-	// create a .ts.net domain, not just the app owner).
+	// WARNING: any Tailscale user can create a .ts.net domain.
+	// Set TRUSTED_ORIGIN to pin to your specific hostname.
 	if strings.HasSuffix(origin, ".ts.net") {
-		// Check the origin has https:// prefix for production
 		if strings.HasPrefix(origin, "https://") {
 			return true
 		}
-		// http://*.ts.net is allowed for Tailscale direct access during dev
 		if strings.HasPrefix(origin, "http://") {
 			return true
 		}

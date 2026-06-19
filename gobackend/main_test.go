@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var testDBPath string
@@ -719,15 +720,119 @@ func TestAuthRateLimiting(t *testing.T) {
 		"email": "test@test.com", "password": "wrong",
 	})
 
-	// Exhaust the rate limit (5 failures = lockout)
+	// First 5 failures: no delay, immediate 401
 	for i := 0; i < 5; i++ {
-		http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
+		resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Fatalf("attempt %d: expected 401, got %d", i+1, resp.StatusCode)
+		}
 	}
 
+	// 6th failure: should get 401 after a delay (not 429)
+	start := time.Now()
 	resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(body))
+	elapsed := time.Since(start)
 	resp.Body.Close()
-	if resp.StatusCode != 429 {
-		t.Fatalf("expected 429 rate limited, got %d", resp.StatusCode)
+	if resp.StatusCode != 401 {
+		t.Fatalf("6th attempt: expected 401 (delayed), got %d", resp.StatusCode)
+	}
+	if elapsed < 2*time.Second {
+		t.Fatalf("6th attempt: expected >= 2s delay, got %v", elapsed)
+	}
+}
+
+func TestAuthDelaySlotExhaustion(t *testing.T) {
+	// Fill all 10 delay slots, then verify authShouldDelay returns false.
+	for i := 0; i < authDelaySlots; i++ {
+		authDelaySem <- struct{}{}
+	}
+
+	// Pre-populate 5 failures so delays kick in
+	for i := 0; i < 5; i++ {
+		authRecordFailure("10.0.0.1")
+	}
+
+	// All slots full — should get false (caller should 429)
+	if authShouldDelay("10.0.0.1") {
+		t.Fatal("expected false when all delay slots are full")
+	}
+
+	// Clean up: drain slots so other tests aren't affected
+	for i := 0; i < authDelaySlots; i++ {
+		<-authDelaySem
+	}
+	authFailCountsMu.Lock()
+	delete(authFailCounts, "10.0.0.1")
+	authFailCountsMu.Unlock()
+}
+
+func TestAuthDelayDuration(t *testing.T) {
+	if d := authDelayDuration(0); d != 0 {
+		t.Fatalf("0 failures: expected 0, got %v", d)
+	}
+	if d := authDelayDuration(4); d != 0 {
+		t.Fatalf("4 failures: expected 0, got %v", d)
+	}
+	if d := authDelayDuration(5); d != 2*time.Second {
+		t.Fatalf("5 failures: expected 2s, got %v", d)
+	}
+	if d := authDelayDuration(6); d != 5*time.Second {
+		t.Fatalf("6 failures: expected 5s, got %v", d)
+	}
+	if d := authDelayDuration(7); d != 15*time.Second {
+		t.Fatalf("7 failures: expected 15s, got %v", d)
+	}
+	if d := authDelayDuration(8); d != 30*time.Second {
+		t.Fatalf("8 failures: expected 30s, got %v", d)
+	}
+	if d := authDelayDuration(9); d != 60*time.Second {
+		t.Fatalf("9+ failures: expected 60s, got %v", d)
+	}
+	if d := authDelayDuration(100); d != 60*time.Second {
+		t.Fatalf("100 failures: expected 60s, got %v", d)
+	}
+}
+
+func TestAuthSuccessResetsCounter(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Create a real user to successfully authenticate against
+	db := OpenDB()
+	hash, _ := hashPassword("reset-test-password")
+	db.Create(&User{Email: "reset-test@test.com", PasswordHash: hash})
+
+	wrongBody, _ := json.Marshal(map[string]string{
+		"email": "reset-test@test.com", "password": "wrong",
+	})
+	correctBody, _ := json.Marshal(map[string]string{
+		"email": "reset-test@test.com", "password": "reset-test-password",
+	})
+
+	// Fail 3 times
+	for i := 0; i < 3; i++ {
+		resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(wrongBody))
+		resp.Body.Close()
+	}
+
+	// Succeed — should reset counter
+	resp, _ := http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(correctBody))
+	resp.Body.Close()
+
+	// Fail 5 more times — should NOT be delayed (counter was reset)
+	for i := 0; i < 5; i++ {
+		resp, _ = http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(wrongBody))
+		resp.Body.Close()
+	}
+
+	// 6th failure after reset: should be delayed (>2s)
+	start := time.Now()
+	resp, _ = http.Post(ts.URL+"/api/auth", "application/json", bytes.NewReader(wrongBody))
+	elapsed := time.Since(start)
+	resp.Body.Close()
+	if elapsed < 2*time.Second {
+		t.Fatalf("after 5 failures post-reset: expected >= 2s delay, got %v", elapsed)
 	}
 }
 

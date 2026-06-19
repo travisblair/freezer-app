@@ -217,6 +217,18 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	mux.HandleFunc("POST /api/auth", authHandler(db))
 	mux.HandleFunc("POST /api/auth/logout", logoutHandler(db))
 
+	// robots.txt — tell crawlers to stay out
+	mux.HandleFunc("GET /robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("User-agent: *\nDisallow: /\n"))
+	})
+
+	// Catch-all for unmatched /api/ paths — return JSON 404
+	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	})
+
 	// Auth-protected read endpoints
 	mux.Handle("GET /api/items", requireAuth(db, http.HandlerFunc(handleListItems(db))))
 	mux.Handle("GET /api/item/{barcode}", requireAuth(db, http.HandlerFunc(handleLookupBarcode(db))))

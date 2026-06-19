@@ -43,41 +43,76 @@ func generateSessionToken() (string, error) {
 
 // ── Auth rate limiting ──────────────────────────────────────────────────
 //
-// Simple in-memory rate limiter for POST /api/auth.
-// After maxFailures consecutive failures from an IP, further attempts are
-// rejected for lockoutDuration. A successful auth resets the counter.
+// After authMaxFailures consecutive failures from an IP, subsequent
+// attempts are progressively delayed before returning 401. The attacker
+// sees no 429 — just an increasingly "slow" server. A concurrency cap
+// (10 slots) prevents resource exhaustion; when full, fall back to 429.
 
 const (
-	authMaxFailures    = 5
-	authLockoutMinutes = 5
+	authMaxFailures = 5
+	authDelaySlots  = 10
 )
 
 var (
 	authFailCounts   = map[string]*authFailEntry{}
 	authFailCountsMu sync.Mutex
+	authDelaySem     = make(chan struct{}, authDelaySlots)
 )
 
 type authFailEntry struct {
 	count    int
-	lockedAt time.Time
+	lastFail time.Time
 }
 
-func authRateLimit(ip string) bool {
-	authFailCountsMu.Lock()
-	defer authFailCountsMu.Unlock()
+// authDelayDuration returns the sleep duration for a given failure count.
+// Returns 0 for counts below authMaxFailures.
+func authDelayDuration(failures int) time.Duration {
+	switch {
+	case failures < 5:
+		return 0
+	case failures == 5:
+		return 2 * time.Second
+	case failures == 6:
+		return 5 * time.Second
+	case failures == 7:
+		return 15 * time.Second
+	case failures == 8:
+		return 30 * time.Second
+	default:
+		return 60 * time.Second
+	}
+}
 
+// authShouldDelay checks whether this IP should be delayed, and if so
+// claims a delay slot, sleeps, and releases it. Returns false if all
+// delay slots are full (caller should return 429).
+func authShouldDelay(ip string) bool {
+	authFailCountsMu.Lock()
 	entry, exists := authFailCounts[ip]
-	if !exists {
+	if !exists || entry.count < authMaxFailures {
+		authFailCountsMu.Unlock()
+		return true // no delay needed, proceed normally
+	}
+	count := entry.count
+	authFailCountsMu.Unlock()
+
+	d := authDelayDuration(count)
+	if d == 0 {
 		return true
 	}
-	if entry.lockedAt.IsZero() {
+
+	// Try to claim a delay slot
+	select {
+	case authDelaySem <- struct{}{}:
+		GetLogger().Info("Auth delay: holding IP %s for %v (failure %d)",
+			ip, d, count)
+		time.Sleep(d)
+		<-authDelaySem
 		return true
+	default:
+		// Slots full — fall back to hard rate limit
+		return false
 	}
-	if time.Since(entry.lockedAt) >= authLockoutMinutes*time.Minute {
-		delete(authFailCounts, ip)
-		return true
-	}
-	return false
 }
 
 func authRecordFailure(ip string) {
@@ -90,10 +125,7 @@ func authRecordFailure(ip string) {
 		authFailCounts[ip] = entry
 	}
 	entry.count++
-	if entry.count >= authMaxFailures {
-		entry.lockedAt = time.Now()
-		GetLogger().Warn("Auth rate limit locked IP %s after %d failures", ip, entry.count)
-	}
+	entry.lastFail = time.Now()
 }
 
 func authRecordSuccess(ip string) {
@@ -102,16 +134,15 @@ func authRecordSuccess(ip string) {
 	delete(authFailCounts, ip)
 }
 
-// authCleanup removes expired lockout entries periodically to prevent
-// unbounded memory growth from unique IPs over months of uptime.
+// authCleanup removes stale entries to prevent unbounded memory growth.
 func authCleanup() {
 	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		authFailCountsMu.Lock()
-		now := time.Now()
+		cutoff := time.Now().Add(-2 * time.Hour)
 		for ip, entry := range authFailCounts {
-			if !entry.lockedAt.IsZero() && now.Sub(entry.lockedAt) > 2*time.Hour {
+			if entry.lastFail.Before(cutoff) {
 				delete(authFailCounts, ip)
 			}
 		}
@@ -192,7 +223,7 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		ip := clientIP(r)
-		if !authRateLimit(ip) {
+		if !authShouldDelay(ip) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
 				"error": "Too many attempts. Try again later.",
 			})
