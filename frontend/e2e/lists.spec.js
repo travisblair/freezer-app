@@ -1,56 +1,59 @@
-// @ts-check
-const { test, expect } = require("@playwright/test");
+import { test, expect } from "@playwright/test";
+import { setupApiMocks, cloneItems, authenticate } from "./fixtures/mock-data.js";
 
 test.describe("Lists", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    // Log in if needed
-    const authForm = page.locator(".auth-container");
-    if (await authForm.isVisible()) {
-      await page.fill('input[type="email"]', "test@test.com");
-      await page.fill('input[type="password"]', "test");
-      await page.click('button[type="submit"]');
-      await page.waitForSelector("text=Freezer", { timeout: 5000 });
-    }
-  });
-
   test("shows Freezer list by default", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
     await expect(page.locator("h1")).toContainText("Freezer");
   });
 
-  test("creates a new list and switches to it", async ({ page }) => {
-    await page.click("text=Add new list");
-    await page.fill('.modal-dialog input[type="text"]', "Pantry");
-    await page.click("text=Create");
+  test("creates a new list", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
+    await page.getByRole("button", { name: "Add new list" }).click();
+    await page.locator(".modal-dialog input[type='text']").fill("Pantry");
+    await page.getByRole("button", { name: "Create" }).click();
+
     // Should switch to new list
     await expect(page.locator("select.list-select")).toContainText("Pantry");
   });
 
   test("renames a list", async ({ page }) => {
-    // Create a list first
-    await page.click("text=Add new list");
-    await page.fill('.modal-dialog input[type="text"]', "Old Name");
-    await page.click("text=Create");
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
 
-    // Click pencil to rename
-    await page.click('[title="Rename list"]');
-    await page.fill('.modal-dialog input[type="text"]', "Renamed");
-    await page.click("text=Save");
+    // Create a list first
+    await page.getByRole("button", { name: "Add new list" }).click();
+    await page.locator(".modal-dialog input[type='text']").fill("Old Name");
+    await page.getByRole("button", { name: "Create" }).click();
+
+    // Rename
+    await page.locator('[title="Rename list"]').click();
+    await page.locator(".modal-dialog input[type='text']").fill("Renamed");
+    await page.getByRole("button", { name: "Save" }).click();
 
     await expect(page.locator("select.list-select")).toContainText("Renamed");
   });
 
   test("deletes a non-default list", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
     // Create a list to delete
-    await page.click("text=Add new list");
-    await page.fill('.modal-dialog input[type="text"]', "DeleteMe");
-    await page.click("text=Create");
+    await page.getByRole("button", { name: "Add new list" }).click();
+    await page.locator(".modal-dialog input[type='text']").fill("DeleteMe");
+    await page.getByRole("button", { name: "Create" }).click();
 
     // Delete it
-    await page.click('[title="Delete list"]');
-    await page.click("text=Delete Forever");
+    await page.locator('[title="Delete list"]').click();
+    await page.getByRole("button", { name: "Delete Forever" }).click();
 
-    // Should no longer be in the select
-    await expect(page.locator("select.list-select")).not.toContainText("DeleteMe");
+    // After delete, currentListId resets to 1; wait for re-render
+    await page.waitForTimeout(500);
+    // After reverting to default list, h1 should show Freezer
+    await expect(page.locator("h1")).toContainText("Freezer");
   });
 });

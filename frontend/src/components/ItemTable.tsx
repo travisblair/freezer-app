@@ -212,10 +212,10 @@ export default function ItemTable() {
                             <button type="button" class="outline kebab-btn" onClick={e2 => { e2.stopPropagation(); toggleKebab(rowKey); }}>⋮</button>
                             <Show when={openKebab() === rowKey}>
                               <div class="kebab-menu">
-                                <div class="kebab-item" onMouseDown={() => { setOpenKebab(0); a.setEditingItem(item); }}>Edit</div>
-                                <div class="kebab-item" onMouseDown={() => { setOpenKebab(0); setMoveState({ item, shelfId: shelf.id, count }); }}>Move</div>
-                                <Show when={!oos}><div class="kebab-item danger" onMouseDown={() => { setOpenKebab(0); a.handleHardDelete(item); }}>Delete</div></Show>
-                                <Show when={oos}><div class="kebab-item" onMouseDown={() => { setOpenKebab(0); a.handleRestore(item); }}>Restore</div></Show>
+                                <div class="kebab-item" onMouseDown={() => { setTimeout(() => { setOpenKebab(0); a.setEditingItem(item); }, 0); }}>Edit</div>
+                                <div class="kebab-item" onMouseDown={() => { setTimeout(() => { setOpenKebab(0); setMoveState({ item, shelfId: shelf.id, count }); }, 0); }}>Move</div>
+                                <Show when={!oos}><div class="kebab-item danger" onMouseDown={() => { setTimeout(() => { setOpenKebab(0); a.handleHardDelete(item); }, 0); }}>Delete</div></Show>
+                                <Show when={oos}><div class="kebab-item" onMouseDown={() => { setTimeout(() => { setOpenKebab(0); a.handleRestore(item); }, 0); }}>Restore</div></Show>
                               </div>
                             </Show>
                           </td>

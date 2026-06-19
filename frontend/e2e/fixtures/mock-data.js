@@ -53,7 +53,8 @@ export function cloneItems() {
 export async function authenticate(page) {
   await page.goto("/");
   // Auth check returns authenticated:true by default, so app renders immediately
-  await expect(page.locator("h1")).toBeVisible();
+  // h1 only renders with single list; select renders with multiple
+    await expect(page.locator("h1, select.list-select").first()).toBeVisible({ timeout: 10000 });
 }
 
 /** Helper: find an item by barcode string */

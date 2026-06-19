@@ -61,3 +61,5 @@ phase2.spec
 .clinerules
 /package.json
 /package-lock.json
+gobackend/freezer-server-arm
+data/

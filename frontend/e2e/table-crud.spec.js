@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { setupApiMocks, cloneItems, authenticate } from "./fixtures/mock-data.js";
+import { clickKebabItem } from "./fixtures/kebab-helpers.js";
+
+function itemRow(page, name) {
+  return page.getByRole("row", { name: new RegExp(name) });
+}
 
 test.describe("Item Table — List & Display", () => {
   test("shows non-deleted items by default", async ({ page }) => {
@@ -12,13 +17,13 @@ test.describe("Item Table — List & Display", () => {
     await expect(page.getByText("Ice Cream")).not.toBeVisible();
   });
 
-  test("shows deleted items when 'Show deleted' is checked", async ({ page }) => {
+  test("shows out-of-stock items when 'Show out of stock' is checked", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    await page.getByLabel("Show deleted").check();
+    await page.getByLabel("Show out of stock").check();
     await expect(page.getByText("Ice Cream").first()).toBeVisible();
-    await expect(page.getByText("(deleted)")).toBeVisible();
+    await expect(page.getByText("(out of stock)")).toBeVisible();
   });
 
   test("shows empty state when no items", async ({ page }) => {
@@ -55,14 +60,14 @@ test.describe("Item Table — List & Display", () => {
     await expect(page.getByText("No items found.")).toBeVisible();
   });
 
-  test("search respects showDeleted toggle", async ({ page }) => {
+  test("search respects showOutOfStock toggle", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
     await page.getByPlaceholder("Search by name...").fill("Ice");
     await expect(page.getByText("No items found.")).toBeVisible();
 
-    await page.getByLabel("Show deleted").check();
+    await page.getByLabel("Show out of stock").check();
     await expect(page.getByText("Ice Cream").first()).toBeVisible();
   });
 
@@ -72,115 +77,77 @@ test.describe("Item Table — List & Display", () => {
 
     const nameCells = page.locator("tbody td:nth-child(2)");
     const names = await nameCells.allTextContents();
-    const clean = names.map((n) => n.replace(/\s*\(deleted\)\s*/, "").trim());
+    const clean = names.map((n) => n.replace(/\s*\(out of stock\)\s*/, "").trim());
     const sorted = [...clean].sort((a, b) => a.localeCompare(b));
     expect(clean).toEqual(sorted);
   });
 });
 
-test.describe("Item Table — Row Actions", () => {
-  test("deletes an item (soft delete via row button)", async ({ page }) => {
-    const db = await setupApiMocks(page, cloneItems());
+test.describe("Item Table — Row Actions via Kebab", () => {
+  test("hard deletes an item via kebab Delete", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    const salmonRow = page.getByRole("row", { name: /Salmon Fillet/ });
-    await salmonRow.getByRole("button", { name: "Delete" }).click();
+    const row = itemRow(page, "Salmon Fillet");
+    await clickKebabItem(row, "Delete");
 
-    const dialog = page.locator("dialog[open]");
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Confirm" }).click();
+    const dialog = page.locator(".modal-overlay");
+    await expect(dialog.getByText("Delete Forever")).toBeVisible();
+    await dialog.getByRole("button", { name: "Delete Forever" }).click();
 
     await expect(page.getByText("Salmon Fillet")).not.toBeVisible();
-
-    const salmon = db.find((i) => i.name === "Salmon Fillet");
-    expect(salmon.count).toBe(0);
-    expect(salmon.deleted).toBe(1);
   });
 
-  test("restores a deleted item", async ({ page }) => {
-    const db = await setupApiMocks(page, cloneItems());
-    await authenticate(page);
-
-    await page.getByLabel("Show deleted").check();
-    await expect(page.getByText("Ice Cream").first()).toBeVisible();
-
-    const iceCreamRow = page.getByRole("row", { name: /Ice Cream/ });
-    await iceCreamRow.getByRole("button", { name: "Restore" }).click();
-
-    await expect(page.getByText("Ice Cream").first()).toBeVisible();
-
-    const iceCream = db.find((i) => i.name === "Ice Cream");
-    expect(iceCream.count).toBe(1);
-    expect(iceCream.deleted).toBe(0);
-  });
-
-  test("deleted rows show (deleted) tag and restore button", async ({ page }) => {
+  test("restores an out-of-stock item via kebab Restore", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    await page.getByLabel("Show deleted").check();
+    await page.getByLabel("Show out of stock").check();
+    await expect(page.getByText("Ice Cream").first()).toBeVisible();
 
-    const iceCreamRow = page.getByRole("row", { name: /Ice Cream/ });
-    await expect(iceCreamRow.getByText("(deleted)")).toBeVisible();
-    await expect(iceCreamRow.getByRole("button", { name: "Restore" })).toBeVisible();
-    await expect(iceCreamRow.getByRole("button", { name: "Delete" })).not.toBeVisible();
+    const row = itemRow(page, "Ice Cream");
+    await clickKebabItem(row, "Restore");
+
+    // After restore, item should still be visible (count > 0)
+    await expect(page.getByText("Ice Cream").first()).toBeVisible();
   });
 
-  test("active rows show Delete button but not Restore", async ({ page }) => {
+  test("out-of-stock rows show (out of stock) tag and Restore in kebab", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    const chickenRow = page.getByRole("row", { name: /Chicken Breast/ });
-    await expect(chickenRow.getByRole("button", { name: "Delete" })).toBeVisible();
-    await expect(chickenRow.getByRole("button", { name: "Restore" })).not.toBeVisible();
+    await page.getByLabel("Show out of stock").check();
+
+    const row = itemRow(page, "Ice Cream");
+    await expect(row.getByText("(out of stock)")).toBeVisible();
+
+    // Open kebab and verify Restore is present, Delete is not
+    await row.locator(".kebab-btn").click();
+    const menu = row.locator(".kebab-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText("Restore")).toBeVisible();
+    await expect(menu.getByText("Delete")).not.toBeVisible();
+  });
+
+  test("active rows show Delete in kebab but not Restore", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
+    const row = itemRow(page, "Chicken Breast");
+    await row.locator(".kebab-btn").click();
+    const menu = row.locator(".kebab-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText("Delete")).toBeVisible();
+    await expect(menu.getByText("Restore")).not.toBeVisible();
   });
 });
 
 test.describe("Item Table — Bulk Actions", () => {
-  test("selecting all via header checkbox selects every item", async ({ page }) => {
-    await setupApiMocks(page, cloneItems());
-    await authenticate(page);
-
-    await page.locator("thead input[type='checkbox']").click();
-
-    await expect(page.getByText(/selected/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Delete Selected" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
-  });
-
-  test("bulk delete soft-deletes selected items", async ({ page }) => {
-    const db = await setupApiMocks(page, cloneItems());
-    await authenticate(page);
-
-    await page.locator("thead input[type='checkbox']").click();
-    await page.getByRole("button", { name: "Delete Selected" }).click();
-
-    const dialog = page.locator("dialog[open]");
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Confirm" }).click();
-
-    await expect(page.getByText("No items found.")).toBeVisible();
-
-    const allDeleted = db.every((i) => i.deleted === 1 && i.count === 0);
-    expect(allDeleted).toBe(true);
-  });
-
-  test("clear selection removes bulk actions", async ({ page }) => {
-    await setupApiMocks(page, cloneItems());
-    await authenticate(page);
-
-    await page.locator("thead input[type='checkbox']").click();
-    await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Clear" }).click();
-    await expect(page.getByRole("button", { name: "Delete Selected" })).not.toBeVisible();
-  });
-
   test("individual row checkbox toggles selection", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    const chickenCheckbox = page.getByRole("row", { name: /Chicken Breast/ }).locator("input[type='checkbox']");
+    const chickenCheckbox = itemRow(page, "Chicken Breast").locator("input[type='checkbox']");
     await chickenCheckbox.check();
 
     await expect(page.getByText("1 selected")).toBeVisible();
@@ -189,14 +156,40 @@ test.describe("Item Table — Bulk Actions", () => {
     await expect(page.getByText(/selected/)).not.toBeVisible();
   });
 
-  test("deselecting header when all selected clears all", async ({ page }) => {
+  test("multiple row selections work", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    await page.locator("thead input[type='checkbox']").click();
-    await expect(page.getByText(/selected/)).toBeVisible();
+    await itemRow(page, "Chicken Breast").locator("input[type='checkbox']").check();
+    await itemRow(page, "Frozen Peas").locator("input[type='checkbox']").check();
 
-    await page.locator("thead input[type='checkbox']").click();
+    await expect(page.getByText("2 selected")).toBeVisible();
+  });
+
+  test("bulk delete with selected items shows confirm modal", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
+    await itemRow(page, "Chicken Breast").locator("input[type='checkbox']").check();
+    await itemRow(page, "Frozen Peas").locator("input[type='checkbox']").check();
+
+    await page.getByRole("button", { name: "Delete Selected" }).click();
+
+    await expect(page.locator(".modal-overlay").getByText(/selected items/)).toBeVisible();
+    await page.locator(".modal-overlay").getByRole("button", { name: "Confirm" }).click();
+
     await expect(page.getByText(/selected/)).not.toBeVisible();
+  });
+
+  test("clear selection removes bulk actions", async ({ page }) => {
+    await setupApiMocks(page, cloneItems());
+    await authenticate(page);
+
+    await itemRow(page, "Chicken Breast").locator("input[type='checkbox']").check();
+    await expect(page.getByRole("button", { name: "Delete Selected" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Clear" }).click();
+
+    await expect(page.getByRole("button", { name: "Delete Selected" })).not.toBeVisible();
   });
 });

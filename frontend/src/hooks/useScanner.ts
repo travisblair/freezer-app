@@ -2,6 +2,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { useCamera } from "./useCamera";
 import { api } from "../api";
 import { bumpItemsVersion } from "../store";
+import { getFirstShelfId } from "../helpers";
 import type { Item, DuplicateOfferData } from "../types";
 import {
   SCANNER_DUPLICATE_COOLDOWN_MS,
@@ -113,7 +114,7 @@ export function useScanner(): ScannerControls {
       if (data.found) {
         const item = data.item as Item;
         // Use first shelf if available, otherwise default to 1
-        const sId = item.shelves && item.shelves.length > 0 ? item.shelves[0].shelfId : 1;
+        const sId = getFirstShelfId(item);
         await api.scan(decodedText, mode(), quantity(), sId);
         bumpItemsVersion();
         setFeedback({ type: "success" });
@@ -194,8 +195,9 @@ export function useScanner(): ScannerControls {
     setLinkBarcode(null);
     doneProcessing();
     try {
-      await api.linkBarcode(itemId, bc!);
-      await api.scan(bc!, mode(), quantity(), 1);
+      const linked = await api.linkBarcode(itemId, bc!) as Item;
+      const sId = getFirstShelfId(linked);
+      await api.scan(bc!, mode(), quantity(), sId);
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
@@ -231,7 +233,8 @@ export function useScanner(): ScannerControls {
     setDuplicateOffer(null);
     doneProcessing();
     try {
-      await api.scan(offer!.barcode, resolveMode, quantity(), 1);
+      const sId = getFirstShelfId(offer!.existing);
+      await api.scan(offer!.barcode, resolveMode, quantity(), sId);
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
