@@ -11,6 +11,7 @@ import { useItemSearch } from "../hooks/useItemSearch";
 import { useItemActions } from "../hooks/useItemActions";
 import ConfirmModal from "./ConfirmModal";
 import EditModal from "./EditModal";
+import MoveModal from "./MoveModal";
 
 type ShelfMap = Map<number, Map<number, number>>;
 
@@ -66,7 +67,7 @@ export default function ItemTable() {
   async function createShelf(e: Event) {
     e.preventDefault(); const n = newName().trim();
     if (!n) return;
-    try { await api.createShelf(n, 1); setNewName(""); await reload(); } catch (_) {}
+    try { await api.createShelf(n, currentListId()); setNewName(""); await reload(); } catch (_) {}
   }
   async function renameShelf(id: number) {
     const n = renameVal().trim();
@@ -79,24 +80,6 @@ export default function ItemTable() {
   }
 
   const vs = () => selShelf() === null ? shelves() : shelves().filter(s => s.id === selShelf());
-
-  const [moveTarget, setMoveTarget] = createSignal(1);
-  const [moveQty, setMoveQty] = createSignal(1);
-
-  const otherShelves = () => shelves().filter(s => s.id !== (moveState()?.shelfId ?? 0));
-  const moveTargetInit = () => otherShelves()[0]?.id ?? 1;
-
-  async function doMove() {
-    const ms = moveState();
-    if (!ms) return;
-    try {
-      await api.moveItem(ms.item.id, ms.shelfId, moveTarget(), moveQty());
-      setMoveState(null);
-      await loadItems();
-    } catch (err) {
-      if (import.meta.env.DEV) console.error("Move failed", err);
-    }
-  }
 
   let countTimer: ReturnType<typeof setTimeout> | null = null;
   async function updateCount(shelfId: number, value: number) {
@@ -270,56 +253,18 @@ export default function ItemTable() {
       </Show>
 
       <Show when={moveState()}>
-        {(() => {
-          const ms = moveState()!;
-          setMoveTarget(moveTargetInit());
-          setMoveQty(ms.count);
-          return (
-            <>
-              <div class="modal-overlay" onClick={() => setMoveState(null)}>
-                <div class="modal-dialog" onClick={e => e.stopPropagation()}>
-              <article>
-                <header style="display:flex;align-items:center;justify-content:space-between">
-                  <strong>Move {ms.item.name}</strong>
-                  <button class="pico-prev" onClick={() => setMoveState(null)} />
-                </header>
-                <label>
-                  To shelf
-                  <select value={String(moveTarget())} onChange={e => setMoveTarget(Number((e.target as HTMLSelectElement).value))}>
-                    {(() => {
-                      const allS = allShelves().filter(s => s.id !== ms.shelfId);
-                      // Group by list
-                      const listMap = new Map<number, { name: string; shelves: typeof allS }>();
-                      for (const s of allS) {
-                        const ln = lists().find(l => l.id === s.listId);
-                        const key = s.listId;
-                        if (!listMap.has(key)) listMap.set(key, { name: ln?.name || `List ${key}`, shelves: [] });
-                        listMap.get(key)!.shelves.push(s);
-                      }
-                      return [...listMap.entries()].map(([listId, g]) => (
-                        <optgroup label={g.name}>
-                          {g.shelves.map(s => (
-                            <option value={String(s.id)}>{s.name}</option>
-                          ))}
-                        </optgroup>
-                      ));
-                    })()}
-                  </select>
-                </label>
-                <label>
-                  Quantity
-                  <input type="number" min="1" max="9999" value={moveQty()} onInput={e => { setMoveQty(parseInt((e.target as HTMLInputElement).value, 10) || 1); }} style="width:5rem" />
-                </label>
-                <footer style="display:flex;gap:8px;justify-content:flex-end">
-                  <button type="button" class="secondary" onClick={() => setMoveState(null)}>Cancel</button>
-                  <button type="button" onClick={doMove}>Save</button>
-                </footer>
-              </article>
-              </div>
-              </div>
-            </>
-          );
-        })()}
+        <MoveModal
+          item={moveState()!.item}
+          shelfId={moveState()!.shelfId}
+          count={moveState()!.count}
+          allShelves={allShelves}
+          lists={lists}
+          onDone={() => {
+            setMoveState(null);
+            loadItems();
+          }}
+          onCancel={() => setMoveState(null)}
+        />
       </Show>
     </div>
   );

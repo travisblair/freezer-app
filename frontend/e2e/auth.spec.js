@@ -1,69 +1,71 @@
 import { test, expect } from "@playwright/test";
 import { setupApiMocks, cloneItems } from "./fixtures/mock-data.js";
 
-test.describe("Auth Flow (HttpOnly Cookie)", () => {
-  test("shows auth form when no cookie is present", async ({ page }) => {
-    // Set up mocks first, then override auth/check to deny
+test.describe("Auth Flow (Email + Password)", () => {
+  test("shows auth form when unauthenticated", async ({ page }) => {
     await setupApiMocks(page);
+    // Override auth/check to deny
+    await page.unroute("**/api/auth/check");
     await page.route("**/api/auth/check", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: false }) });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: false }),
+      });
     });
     await page.goto("/");
 
-    await expect(page.getByText("Enter your access token")).toBeVisible();
-    await expect(page.getByPlaceholder("Enter token...")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Unlock" })).toBeVisible();
-    await expect(page.getByText("🧊 Freezer Inventory")).not.toBeVisible();
+    await expect(page.getByText("Sign in to continue.")).toBeVisible();
+    await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign In" })).toBeVisible();
   });
 
-  test("unlocks the app with a valid token (cookie set by server)", async ({ page }) => {
+  test("signs in with valid email and password", async ({ page }) => {
     await setupApiMocks(page);
+    await page.unroute("**/api/auth/check");
     await page.route("**/api/auth/check", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: false }) });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: false }),
+      });
     });
     await page.goto("/");
 
-    await page.getByPlaceholder("Enter token...").fill("test-token-123");
-    await page.getByRole("button", { name: "Unlock" }).click();
+    await page.getByPlaceholder("you@example.com").fill("test@test.com");
+    await page.getByPlaceholder("Enter password...").fill("test");
+    await page.getByRole("button", { name: "Sign In" }).click();
 
-    await expect(page.getByText("Enter your access token")).not.toBeVisible();
-    await expect(page.getByText("🧊 Freezer Inventory")).toBeVisible();
+    // Should now show the main app
+    await expect(page.getByText("Sign in to continue.")).not.toBeVisible();
     await expect(page.getByText("Manual Add")).toBeVisible();
   });
 
-  test("does not unlock with empty token", async ({ page }) => {
+  test("shows error on invalid credentials", async ({ page }) => {
     await setupApiMocks(page);
+    await page.unroute("**/api/auth/check");
     await page.route("**/api/auth/check", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: false }) });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: false }),
+      });
     });
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Unlock" }).click();
+    await page.getByPlaceholder("you@example.com").fill("wrong@test.com");
+    await page.getByPlaceholder("Enter password...").fill("wrong");
+    await page.getByRole("button", { name: "Sign In" }).click();
 
-    await expect(page.getByText("Enter your access token")).toBeVisible();
-    await expect(page.getByText("🧊 Freezer Inventory")).not.toBeVisible();
+    await expect(page.getByText("Invalid email or password")).toBeVisible();
   });
 
-  test("skips auth form when cookie is already valid", async ({ page }) => {
-    // Default mock returns authenticated: true — auth form skipped automatically
+  test("skips auth form when already authenticated", async ({ page }) => {
+    // Default mock returns authenticated: true
     await setupApiMocks(page, cloneItems());
     await page.goto("/");
 
-    await expect(page.getByText("Enter your access token")).not.toBeVisible();
-    await expect(page.getByText("🧊 Freezer Inventory")).toBeVisible();
-  });
-
-  test("shows error message on invalid token", async ({ page }) => {
-    await setupApiMocks(page);
-    await page.route("**/api/auth/check", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ authenticated: false }) });
-    });
-    await page.goto("/");
-
-    await page.getByPlaceholder("Enter token...").fill("wrong-token");
-    await page.getByRole("button", { name: "Unlock" }).click();
-
-    await expect(page.getByText("Enter your access token")).toBeVisible();
-    await expect(page.getByText("Invalid token")).toBeVisible();
+    await expect(page.getByText("Sign in to continue.")).not.toBeVisible();
+    await expect(page.getByText("Inventory")).toBeVisible();
   });
 });

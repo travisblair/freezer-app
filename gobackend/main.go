@@ -170,9 +170,12 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 
 // securityHeadersMiddleware sets defensive HTTP security headers on every response.
 // Applied outermost so all responses include these headers.
+// HSTS is only set on HTTPS connections to avoid poisoning localhost.
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")

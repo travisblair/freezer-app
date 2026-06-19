@@ -157,13 +157,17 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		// Find or create the ItemShelf row for this shelf (in a transaction
 		// to prevent a TOCTOU race between First and Create).
 		var itemShelf ItemShelf
-		db.Transaction(func(tx *gorm.DB) error {
+		if err := db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error; err != nil {
 				itemShelf = ItemShelf{ItemID: item.ID, ShelfID: targetShelfID, Count: 0}
 				return tx.Create(&itemShelf).Error
 			}
 			return nil
-		})
+		}); err != nil {
+			GetLogger().Error("find-or-create ItemShelf failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
+		}
 
 		delta := body.Quantity
 		if body.Mode == "decrement" {
@@ -249,7 +253,7 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 
 		if bc != "" {
 			db.Create(&ItemBarcode{ItemID: item.ID, Barcode: bc})
-			item.Barcodes = []ItemBarcode{{ID: 0, ItemID: item.ID, Barcode: bc}}
+			item.Barcodes = []ItemBarcode{{ItemID: item.ID, Barcode: bc}}
 		}
 
 		writeJSON(w, http.StatusCreated, item)
@@ -513,22 +517,34 @@ func handleDeleteShelf(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Move all items on this shelf to Shelf 1, merging counts
-		// for items that already exist on Shelf 1.
+		// for items that already exist on Shelf 1. Run in a transaction
+		// so a crash mid-way doesn't leave orphaned ItemShelf rows.
 		var itemShelves []ItemShelf
 		db.Where("shelf_id = ?", id).Find(&itemShelves)
-		for _, is := range itemShelves {
-			var existing ItemShelf
-			if err := db.Where("item_id = ? AND shelf_id = ?", is.ItemID, uint(1)).First(&existing).Error; err == nil {
-				// Already on Shelf 1 — merge counts
-				db.Model(&existing).Update("count", gorm.Expr("count + ?", is.Count))
-				db.Delete(&is)
-			} else {
-				// Move to Shelf 1
-				db.Model(&is).Update("shelf_id", 1)
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			for _, is := range itemShelves {
+				var existing ItemShelf
+				if err := tx.Where("item_id = ? AND shelf_id = ?", is.ItemID, uint(1)).First(&existing).Error; err == nil {
+					// Already on Shelf 1 — merge counts
+					if err := tx.Model(&existing).Update("count", gorm.Expr("count + ?", is.Count)).Error; err != nil {
+						return err
+					}
+					if err := tx.Delete(&is).Error; err != nil {
+						return err
+					}
+				} else {
+					// Move to Shelf 1
+					if err := tx.Model(&is).Update("shelf_id", 1).Error; err != nil {
+						return err
+					}
+				}
 			}
+			return tx.Delete(&shelf).Error
+		}); err != nil {
+			GetLogger().Error("delete shelf transaction failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
 		}
-
-		db.Delete(&shelf)
 		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
 }
@@ -597,31 +613,40 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		// Find source ItemShelf row
-		var source ItemShelf
-		if db.Where("item_id = ? AND shelf_id = ?", body.ItemID, body.SourceShelfID).First(&source).Error != nil {
-			errorJSON(w, http.StatusNotFound, "item not found on source shelf")
+		var qty int
+		err := db.Transaction(func(tx *gorm.DB) error {
+			var source ItemShelf
+			if err := tx.Where("item_id = ? AND shelf_id = ?", body.ItemID, body.SourceShelfID).First(&source).Error; err != nil {
+				return err
+			}
+
+			qty = body.Quantity
+			if qty > source.Count {
+				qty = source.Count
+			}
+
+			// Decrement source
+			if err := tx.Model(&source).Update("count", gorm.Expr("count - ?", qty)).Error; err != nil {
+				return err
+			}
+			if source.Count-qty <= 0 {
+				if err := tx.Delete(&source).Error; err != nil {
+					return err
+				}
+			}
+
+			// Increment or create target
+			var target ItemShelf
+			if err := tx.Where("item_id = ? AND shelf_id = ?", body.ItemID, body.TargetShelfID).First(&target).Error; err == nil {
+				return tx.Model(&target).Update("count", gorm.Expr("count + ?", qty)).Error
+			}
+			return tx.Create(&ItemShelf{ItemID: body.ItemID, ShelfID: body.TargetShelfID, Count: qty}).Error
+		})
+
+		if err != nil {
+			GetLogger().Error("move item transaction failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
-		}
-
-		qty := body.Quantity
-		if qty > source.Count {
-			qty = source.Count
-		}
-
-		// Decrement source
-		db.Model(&source).Update("count", gorm.Expr("count - ?", qty))
-		source.Count -= qty
-		if source.Count <= 0 {
-			db.Delete(&source)
-		}
-
-		// Increment or create target
-		var target ItemShelf
-		if err := db.Where("item_id = ? AND shelf_id = ?", body.ItemID, body.TargetShelfID).First(&target).Error; err == nil {
-			db.Model(&target).Update("count", gorm.Expr("count + ?", qty))
-		} else {
-			db.Create(&ItemShelf{ItemID: body.ItemID, ShelfID: body.TargetShelfID, Count: qty})
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{

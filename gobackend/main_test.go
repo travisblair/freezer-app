@@ -435,7 +435,6 @@ func TestUpdateItem(t *testing.T) {
 }
 
 func TestShowOutOfStock(t *testing.T) {
-	t.Skip("TODO: debug scan-then-list roundtrip in test DB")
 	ts := newTestServer(t)
 	defer ts.Close()
 
