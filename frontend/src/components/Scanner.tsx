@@ -48,18 +48,6 @@ export default function Scanner() {
                 class="no-mb"
               />
             </label>
-            <label class="no-mb flex-row gap-1">
-              Shelf:
-              <select
-                value={sc.selectedShelfId()}
-                onChange={(e) => sc.setSelectedShelfId(Number((e.target as HTMLSelectElement).value))}
-                class="no-mb"
-              >
-                {sc.shelves().map((s) => (
-                  <option value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </label>
             {!sc.scanning() && !sc.cameraError() && (
               <button type="button" onClick={sc.startCamera}>
                 Start Camera
@@ -77,6 +65,21 @@ export default function Scanner() {
           )}
 
           <div id="reader" class="scanner-viewport" />
+
+          {/* Shelf select — appears after scanning, full width */}
+          {sc.prompt() && (
+            <label class="mb-h" style="display:block">
+              Shelf
+              <select
+                value={sc.selectedShelfId()}
+                onChange={(e) => sc.setSelectedShelfId(Number((e.target as HTMLSelectElement).value))}
+              >
+                {sc.shelves().map((s) => (
+                  <option value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {sc.feedback() && (
             <div
@@ -114,6 +117,9 @@ export default function Scanner() {
           {sc.prompt() && sc.prompt()!.mode === "create" && (
             <ScanPromptForm
               barcode={sc.prompt()!.barcode}
+              shelves={sc.shelves()}
+              selectedShelfId={sc.selectedShelfId()}
+              onShelfChange={(id) => sc.setSelectedShelfId(id)}
               onSubmit={(name, qty) => sc.handleCreateNew(name, qty)}
               onCancel={sc.handleCancelPrompt}
             />

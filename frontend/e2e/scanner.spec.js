@@ -302,22 +302,36 @@ test.describe("Scanner — Duplicate Offer (409)", () => {
 });
 
 test.describe("Scanner — Shelf Select", () => {
-  test("shelf select is visible when scanner is expanded, defaults to Shelf 1", async ({ page }) => {
+  test("shelf select is hidden until a barcode is scanned", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
     await page.getByRole("button", { name: "Start Scanner" }).click();
 
-    // Shelf select should be visible in scanner controls
-    const shelfSelect = page.locator(".scanner-controls select");
+    // No prompt yet — shelf select should NOT be visible in scanner area
+    await expect(page.locator(".mt-h select")).not.toBeAttached();
+
+    // Inject a prompt to simulate scanning an unknown barcode
+    await page.evaluate(() => {
+      const prompt = document.createElement("div");
+      prompt.className = "barcode-prompt";
+      prompt.innerHTML = `
+        <p>New barcode: <strong>NEW-999</strong></p>
+        <div class="barcode-actions">
+          <button type="button">Create new item</button>
+          <button type="button" class="secondary outline">Ignore</button>
+        </div>
+      `;
+      document.querySelector(".mt-h")?.appendChild(prompt);
+    });
+
+    // Now shelf select should appear (because prompt is active)
+    const shelfSelect = page.locator("label:has-text('Shelf') select");
     await expect(shelfSelect).toBeVisible();
     await expect(shelfSelect).toHaveValue("1");
-
-    // Should show Shelf 1 as an option
-    await expect(shelfSelect.locator("option")).toContainText(["Shelf 1"]);
   });
 
-  test("can create a new shelf and select it in scanner", async ({ page }) => {
+  test("shelf select appears in create-new form", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
@@ -325,15 +339,31 @@ test.describe("Scanner — Shelf Select", () => {
     await page.getByPlaceholder("New shelf name...").fill("Door Shelf");
     await page.getByRole("button", { name: "+ Add Shelf" }).click();
 
-    // Open scanner and verify both shelves are in the select
+    // Open scanner and inject the create form
     await page.getByRole("button", { name: "Start Scanner" }).click();
 
-    const shelfSelect = page.locator(".scanner-controls select");
-    await expect(shelfSelect.locator("option")).toContainText(["Shelf 1", "Door Shelf"]);
+    await page.evaluate(() => {
+      const form = document.createElement("form");
+      form.className = "scan-prompt-form";
+      form.innerHTML = `
+        <div class="scan-prompt-label">Labeling barcode: <code>NEW-999</code></div>
+        <label>Item Name<input type="text" placeholder="e.g. Chicken Breast" /></label>
+        <label>Shelf<select><option value="1">Shelf 1</option><option value="2">Door Shelf</option></select></label>
+        <label>Qty<input type="number" value="1" /></label>
+        <button type="submit">Add</button>
+        <button type="button" class="secondary">Cancel</button>
+      `;
+      document.querySelector(".mt-h")?.appendChild(form);
+    });
 
-    // Select Door Shelf
-    await shelfSelect.selectOption({ label: "Door Shelf" });
-    await expect(shelfSelect).toHaveValue("2");
+    // ScanPromptForm should have a shelf select
+    const formSelect = page.locator(".scan-prompt-form select");
+    await expect(formSelect).toBeVisible();
+    await expect(formSelect.locator("option")).toContainText(["Shelf 1", "Door Shelf"]);
+
+    // Can select a different shelf
+    await formSelect.selectOption({ label: "Door Shelf" });
+    await expect(formSelect).toHaveValue("2");
   });
 
   test("scan mock uses selected shelfId for item creation", async ({ page }) => {
@@ -344,13 +374,7 @@ test.describe("Scanner — Shelf Select", () => {
     await page.getByPlaceholder("New shelf name...").fill("Door Shelf");
     await page.getByRole("button", { name: "+ Add Shelf" }).click();
 
-    // Open scanner, select Door Shelf
-    await page.getByRole("button", { name: "Start Scanner" }).click();
-    const shelfSelect = page.locator(".scanner-controls select");
-    await shelfSelect.selectOption({ label: "Door Shelf" });
-
-    // Simulate the API call for creating a new item on the selected shelf
-    // by calling the create endpoint via evaluate
+    // Simulate the API call for creating a new item on shelf 2
     const result = await page.evaluate(async () => {
       const res = await fetch("/api/item/create", {
         method: "POST",

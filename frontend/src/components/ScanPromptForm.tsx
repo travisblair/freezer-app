@@ -1,7 +1,11 @@
 import { createSignal } from "solid-js";
+import type { Shelf } from "../types";
 
 interface Props {
   barcode: string;
+  shelves: Shelf[];
+  selectedShelfId: number;
+  onShelfChange: (id: number) => void;
   onSubmit: (name: string, qty: number) => void;
   onCancel: () => void;
 }
@@ -35,6 +39,17 @@ export default function ScanPromptForm(props: Props) {
           required
           autofocus
         />
+      </label>
+      <label>
+        Shelf
+        <select
+          value={props.selectedShelfId}
+          onChange={(e) => props.onShelfChange(Number((e.target as HTMLSelectElement).value))}
+        >
+          {props.shelves.map((s) => (
+            <option value={s.id}>{s.name}</option>
+          ))}
+        </select>
       </label>
       <label>
         Qty
