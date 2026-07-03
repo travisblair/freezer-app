@@ -3,7 +3,7 @@ import { useCamera } from "./useCamera";
 import { api } from "../api";
 import { bumpItemsVersion } from "../store";
 import { getFirstShelfId } from "../helpers";
-import type { Item, DuplicateOfferData } from "../types";
+import type { Item, DuplicateOfferData, Shelf } from "../types";
 import {
   SCANNER_DUPLICATE_COOLDOWN_MS,
   SCANNER_PROCESSING_TIMEOUT_MS,
@@ -35,6 +35,9 @@ export interface ScannerControls {
   isProcessing: () => boolean;
   setFeedback: (v: Feedback | null) => void;
   linkBarcode: () => string | null;
+  selectedShelfId: () => number;
+  setSelectedShelfId: (v: number) => void;
+  shelves: () => Shelf[];
   // Actions
   toggleExpanded: () => Promise<void>;
   startCamera: () => Promise<void>;
@@ -72,6 +75,8 @@ export function useScanner(): ScannerControls {
   const [duplicateOffer, setDuplicateOffer] = createSignal<DuplicateOfferData | null>(null);
   const [isProcessing, setIsProcessing] = createSignal(false);
   const [linkBarcode, setLinkBarcode] = createSignal<string | null>(null);
+  const [selectedShelfId, setSelectedShelfId] = createSignal(1);
+  const [shelves, setShelves] = createSignal<Shelf[]>([]);
 
   let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
   let processingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -113,8 +118,10 @@ export function useScanner(): ScannerControls {
       const data = await api.getItem(decodedText);
       if (data.found) {
         const item = data.item as Item;
-        // Use first shelf if available, otherwise default to 1
-        const sId = getFirstShelfId(item);
+        // Default to item's first shelf, but use user-selected shelf if set
+        const sId = selectedShelfId() !== 1 || getFirstShelfId(item) === 1
+          ? selectedShelfId()
+          : getFirstShelfId(item);
         await api.scan(decodedText, mode(), quantity(), sId);
         bumpItemsVersion();
         setFeedback({ type: "success" });
@@ -164,7 +171,7 @@ export function useScanner(): ScannerControls {
     setPrompt(null);
     doneProcessing();
     try {
-      await api.create(bc || null, name, qty, 1);
+      await api.create(bc || null, name, qty, selectedShelfId());
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
@@ -195,9 +202,8 @@ export function useScanner(): ScannerControls {
     setLinkBarcode(null);
     doneProcessing();
     try {
-      const linked = await api.linkBarcode(itemId, bc!) as Item;
-      const sId = getFirstShelfId(linked);
-      await api.scan(bc!, mode(), quantity(), sId);
+      await api.linkBarcode(itemId, bc!);
+      await api.scan(bc!, mode(), quantity(), selectedShelfId());
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
@@ -225,6 +231,8 @@ export function useScanner(): ScannerControls {
       setExpanded(false);
     } else {
       setExpanded(true);
+      // Load shelves for the shelf select dropdown
+      api.allShelves().then(setShelves).catch(() => {});
     }
   }
 
@@ -233,8 +241,7 @@ export function useScanner(): ScannerControls {
     setDuplicateOffer(null);
     doneProcessing();
     try {
-      const sId = getFirstShelfId(offer!.existing);
-      await api.scan(offer!.barcode, resolveMode, quantity(), sId);
+      await api.scan(offer!.barcode, resolveMode, quantity(), selectedShelfId());
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
@@ -256,6 +263,7 @@ export function useScanner(): ScannerControls {
     expanded, scanning: cam.scanning, mode, setMode, quantity, setQuantity,
     feedback, prompt, cameraError: cam.cameraError, duplicateOffer, setDuplicateOffer,
     isProcessing, setFeedback, linkBarcode,
+    selectedShelfId, setSelectedShelfId, shelves,
     // Actions
     toggleExpanded, startCamera: cam.startCamera, stopCamera: cam.stopCamera,
     showCreateForm, handleSwitchToAddAndCreate,

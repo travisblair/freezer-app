@@ -13,22 +13,30 @@ test.describe("Shelf Management", () => {
     await expect(page.getByPlaceholder("New shelf name...")).toHaveValue("");
   });
 
-  test.fixme("renames a shelf via pencil button", async ({ page }) => {
+  test("renames a shelf via pencil button", async ({ page }) => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
-    // Find the shelf header and click pencil
-    const shelfHeader = page.locator(".shelf-header").filter({ hasText: "Shelf 1" });
-    await shelfHeader.locator("button").first().click(); // pencil button
+    // Shelf 1 should be visible and expanded
+    const shelf1 = page.locator(".shelf-section").first();
+    await expect(shelf1.locator(".shelf-header")).toContainText("Shelf 1");
 
-    // Input should appear for renaming
-    const input = shelfHeader.locator("input[type='text']");
+    // Click the pencil button in the shelf actions area
+    await shelf1.locator(".shelf-actions button").first().click();
+
+    // Rename input should appear. Verifies the accordion toggle doesn't steal
+    // focus (regression test for onMouseDown stopPropagation fix).
+    const input = shelf1.locator("input[type='text']");
     await expect(input).toBeVisible();
+
+    // Click into the input — should NOT toggle the accordion
+    await input.click();
     await input.fill("Main Shelf");
     await input.press("Enter");
-    // Wait for rename to take effect
 
-    await expect(page.getByText("Main Shelf")).toBeVisible();
+    // Rename should commit and show new name
+    await expect(shelf1.locator(".shelf-header")).toContainText("Main Shelf");
+    await expect(shelf1.locator(".shelf-header")).not.toContainText("Shelf 1");
   });
 
   test("deletes a shelf via trash button", async ({ page }) => {

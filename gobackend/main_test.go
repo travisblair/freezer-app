@@ -1021,6 +1021,61 @@ func TestDeleteShelfMovesItems(t *testing.T) {
 	}
 }
 
+// ── Shelf Audit ───────────────────────────────────────────────────────
+
+func TestShelfAudit(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	auditDB := OpenDB()
+
+	// 1. Create a shelf → should log an audit row
+	resp := doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Audit Test", "listId": 1,
+	}, true)
+	var shelf Shelf
+	decodeJSON(t, resp, &shelf)
+
+	var created []ShelfAudit
+	auditDB.Where("shelf_id = ? AND action = ?", shelf.ID, "created").Find(&created)
+	if len(created) != 1 {
+		t.Fatalf("expected 1 created audit row, got %d", len(created))
+	}
+	if created[0].Name != "Audit Test" {
+		t.Fatalf("expected audit name 'Audit Test', got '%s'", created[0].Name)
+	}
+
+	// 2. Rename the shelf → should log an audit row
+	resp = doJSON(t, ts, "PATCH", fmt.Sprintf("/api/shelf/%d", shelf.ID), map[string]interface{}{
+		"name": "Renamed",
+	}, true)
+	_ = resp
+
+	var renamed []ShelfAudit
+	auditDB.Where("shelf_id = ? AND action = ?", shelf.ID, "renamed").Find(&renamed)
+	if len(renamed) != 1 {
+		t.Fatalf("expected 1 renamed audit row, got %d", len(renamed))
+	}
+	if renamed[0].Name != "Renamed" {
+		t.Fatalf("expected audit name 'Renamed', got '%s'", renamed[0].Name)
+	}
+
+	// 3. Delete the shelf → should log an audit row
+	resp = doJSON(t, ts, "DELETE", fmt.Sprintf("/api/shelf/%d", shelf.ID), nil, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var deleted []ShelfAudit
+	auditDB.Where("shelf_id = ? AND action = ?", shelf.ID, "deleted").Find(&deleted)
+	if len(deleted) != 1 {
+		t.Fatalf("expected 1 deleted audit row, got %d", len(deleted))
+	}
+	if deleted[0].Name != "Renamed" {
+		t.Fatalf("expected audit name 'Renamed' (name at time of delete), got '%s'", deleted[0].Name)
+	}
+}
+
 func TestCreateItemWithShelf(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()

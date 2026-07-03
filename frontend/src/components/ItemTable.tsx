@@ -146,7 +146,7 @@ export default function ItemTable() {
                   {renameId() === shelf.id ? (
                     <span>
                       <form onSubmit={e2 => { e2.preventDefault(); renameShelf(shelf.id); }} onClick={e2 => e2.stopPropagation()} style="display:inline">
-                        <input type="text" value={renameVal()} onInput={e2 => setRenameVal((e2.target as HTMLInputElement).value)} style="width:100px;display:inline;margin:0" autofocus />
+                        <input type="text" value={renameVal()} onInput={e2 => setRenameVal((e2.target as HTMLInputElement).value)} onMouseDown={e2 => e2.stopPropagation()} style="width:100px;display:inline;margin:0" autofocus />
                       </form>
                       <button type="button" class="outline small-action" onClick={e2 => { e2.stopPropagation(); setRenameId(null); }} style="margin-left:4px">✕</button>
                     </span>

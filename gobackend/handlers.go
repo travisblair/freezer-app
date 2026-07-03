@@ -454,6 +454,7 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 
 		shelf := Shelf{Name: name, ListID: listID}
 		db.Create(&shelf)
+		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "created"})
 		writeJSON(w, http.StatusCreated, shelf)
 	}
 }
@@ -491,6 +492,7 @@ func handleUpdateShelf(db *gorm.DB) http.HandlerFunc {
 		}
 
 		db.Model(&shelf).Update("name", name)
+		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "renamed"})
 		writeJSON(w, http.StatusOK, shelf)
 	}
 }
@@ -539,7 +541,10 @@ func handleDeleteShelf(db *gorm.DB) http.HandlerFunc {
 					}
 				}
 			}
-			return tx.Delete(&shelf).Error
+			if err := tx.Delete(&shelf).Error; err != nil {
+				return err
+			}
+			return tx.Create(&ShelfAudit{ShelfID: shelf.ID, Name: shelf.Name, Action: "deleted"}).Error
 		}); err != nil {
 			GetLogger().Error("delete shelf transaction failed: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})

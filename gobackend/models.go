@@ -58,3 +58,13 @@ type List struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	Name      string    `gorm:"not null" json:"name"`
 }
+
+// ShelfAudit records creation, rename, and deletion of shelves.
+// Provides a permanent audit trail that survives log rotation.
+type ShelfAudit struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `json:"createdAt"`
+	ShelfID   uint      `gorm:"not null;index" json:"shelfId"`
+	Name      string    `gorm:"not null" json:"name"`
+	Action    string    `gorm:"not null" json:"action"` // "created", "renamed", "deleted"
+}

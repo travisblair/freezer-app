@@ -61,7 +61,7 @@ func OpenDB() *gorm.DB {
 
 	// Auto-migrate models. GORM creates tables if they don't exist
 	// and adds missing columns. Existing data is never dropped.
-	if err := db.AutoMigrate(&Item{}, &ItemBarcode{}, &Shelf{}, &ItemShelf{}, &User{}, &List{}); err != nil {
+	if err := db.AutoMigrate(&Item{}, &ItemBarcode{}, &Shelf{}, &ItemShelf{}, &User{}, &List{}, &ShelfAudit{}); err != nil {
 		GetLogger().Fatal("auto-migration failed: %v", err)
 	}
 

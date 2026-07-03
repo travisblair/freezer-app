@@ -48,6 +48,18 @@ export default function Scanner() {
                 class="no-mb"
               />
             </label>
+            <label class="no-mb flex-row gap-1">
+              Shelf:
+              <select
+                value={sc.selectedShelfId()}
+                onChange={(e) => sc.setSelectedShelfId(Number((e.target as HTMLSelectElement).value))}
+                class="no-mb"
+              >
+                {sc.shelves().map((s) => (
+                  <option value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
             {!sc.scanning() && !sc.cameraError() && (
               <button type="button" onClick={sc.startCamera}>
                 Start Camera
