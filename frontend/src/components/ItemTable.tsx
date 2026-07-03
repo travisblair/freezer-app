@@ -148,7 +148,7 @@ export default function ItemTable() {
                       <form onSubmit={e2 => { e2.preventDefault(); renameShelf(shelf.id); }} onClick={e2 => e2.stopPropagation()} style="display:inline">
                         <input type="text" value={renameVal()} onInput={e2 => setRenameVal((e2.target as HTMLInputElement).value)} onMouseDown={e2 => e2.stopPropagation()} style="width:100px;display:inline;margin:0" autofocus />
                       </form>
-                      <button type="button" class="outline small-action" onClick={e2 => { e2.stopPropagation(); setRenameId(null); }} style="margin-left:4px">✕</button>
+                      <button type="button" class="outline small-action" onMouseDown={e2 => e2.stopPropagation()} onClick={e2 => { e2.stopPropagation(); setRenameId(null); }} style="margin-left:4px">✕</button>
                     </span>
                   ) : shelf.name}
                 </span>
