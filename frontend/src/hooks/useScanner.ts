@@ -122,6 +122,8 @@ export function useScanner(): ScannerControls {
         const sId = selectedShelfId() !== 1 || getFirstShelfId(item) === 1
           ? selectedShelfId()
           : getFirstShelfId(item);
+        // Update dropdown to reflect which shelf was actually used
+        setSelectedShelfId(sId);
         await api.scan(decodedText, mode(), quantity(), sId);
         bumpItemsVersion();
         setFeedback({ type: "success" });
