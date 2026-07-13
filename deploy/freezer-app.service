@@ -14,6 +14,10 @@ WorkingDirectory=/home/admin/freezer-app
 ExecStart=/home/admin/freezer-app/prod-start.sh
 Restart=always
 RestartSec=10
+# Allow up to 5 min for the server to become ready (sends READY=1 via sd_notify).
+# Default 90s is too tight after a power outage — SMTP recovery alerts can hang
+# waiting for the ISP modem to come back online.
+TimeoutStartSec=300s
 Environment=PORT=3000
 Environment=GOMEMLIMIT=80MiB
 # Soft limit: Go GC gets aggressive above this to stay under the hard cap

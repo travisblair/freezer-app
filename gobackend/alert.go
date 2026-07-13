@@ -115,7 +115,11 @@ func CheckCrashOnStartup() {
 			tailOfCaptureLog(),
 			logLocation(),
 		)
-		sendAlert("\u26d1 Freezer-app recovered", body)
+		// Fire alert in background — SMTP connect can hang for minutes if the
+	// network isn't ready (e.g. after a power outage, ISP modem still coming up).
+	// Blocking here risks hitting systemd's TimeoutStartSec before the server
+	// can even start listening.
+	go sendAlert("\u26d1 Freezer-app recovered", body)
 	}
 }
 
