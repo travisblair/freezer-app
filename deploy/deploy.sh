@@ -26,7 +26,7 @@ ssh -t "$PI_ADDR" "
   tar -xzf ~/release.tar.gz
   rm ~/release.tar.gz
   chmod +x gobackend/freezer-server prod-start.sh
-  sudo cp deploy/freezer-app.service /etc/systemd/system/
+  sudo /bin/cp /home/admin/freezer-app/deploy/freezer-app.service /etc/systemd/system/
   sudo systemctl daemon-reload
   sudo systemctl restart freezer-app
   sleep 2
