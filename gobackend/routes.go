@@ -164,9 +164,20 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
-	deadline := time.Now().Add(10 * time.Minute)
+	start := time.Now()
+	deadline := start.Add(10 * time.Minute)
 	chunk := 0
 	for time.Now().Before(deadline) {
+		// Detect client disconnect
+		select {
+		case <-r.Context().Done():
+			elapsed := time.Since(start).Round(time.Second)
+			GetLogger().Info("🪤 TARPIT BAILED | %s | %d chunks | %v",
+				r.URL.Path, chunk, elapsed)
+			return
+		default:
+		}
+
 		chunk++
 		payload := fmt.Sprintf(
 			`{"status":"ok","config":{"env":"production","debug":false,"version":"%d.%d.%d","node":"%s"},"timestamp":"%s"}`+"\n",
@@ -181,6 +192,10 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 	// Graceful close — scanner thinks the transfer completed
 	fmt.Fprintf(w, `{"status":"ok","complete":true}`+"\n")
 	flusher.Flush()
+
+	elapsed := time.Since(start).Round(time.Second)
+	GetLogger().Info("🪤 TARPIT COMPLETE | %s | %d chunks | %v",
+		r.URL.Path, chunk, elapsed)
 }
 
 // clearRateLimiters resets all rate limiter state. Used in tests to prevent
@@ -268,8 +283,12 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Tarpit known scanner paths before anything else
 			if scannerProbes[r.URL.Path] {
-				GetLogger().Info("🪤 TARPIT | %s | %s | UA=%s",
-					r.URL.Path, r.RemoteAddr, truncate(r.UserAgent(), 80))
+				xff := r.Header.Get("X-Forwarded-For")
+				if xff == "" {
+					xff = r.RemoteAddr
+				}
+				GetLogger().Info("🪤 TARPIT | %s | real-ip=%s | UA=%s | Accept-Language=%s",
+					r.URL.Path, xff, r.UserAgent(), r.Header.Get("Accept-Language"))
 				serveTarpit(w, r)
 				return
 			}
