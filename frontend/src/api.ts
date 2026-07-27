@@ -139,6 +139,11 @@ export const api = {
     return request("/export") as Promise<Blob>;
   },
 
+  /** Lightweight health check — used by the offline banner retry. */
+  check(): Promise<unknown> {
+    return request("/health") as Promise<unknown>;
+  },
+
   // ── Shelves ─────────────────────────────────────────────────────────
 
   getShelves(listId?: number): Promise<Shelf[]> {

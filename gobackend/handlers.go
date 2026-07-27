@@ -244,16 +244,31 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 		}
 
 		item := Item{Name: name}
-		db.Create(&item)
 
-		// Create the shelf link
-		is := ItemShelf{ItemID: item.ID, ShelfID: shelfID, Count: body.Quantity}
-		db.Create(&is)
-		item.Shelves = []ItemShelf{{ID: is.ID, ItemID: item.ID, ShelfID: shelfID, Count: body.Quantity}}
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
 
-		if bc != "" {
-			db.Create(&ItemBarcode{ItemID: item.ID, Barcode: bc})
-			item.Barcodes = []ItemBarcode{{ItemID: item.ID, Barcode: bc}}
+			is := ItemShelf{ItemID: item.ID, ShelfID: shelfID, Count: body.Quantity}
+			if err := tx.Create(&is).Error; err != nil {
+				return err
+			}
+			item.Shelves = []ItemShelf{{ID: is.ID, ItemID: item.ID, ShelfID: shelfID, Count: body.Quantity}}
+
+			if bc != "" {
+				if err := tx.Create(&ItemBarcode{ItemID: item.ID, Barcode: bc}).Error; err != nil {
+					return err
+				}
+				item.Barcodes = []ItemBarcode{{ItemID: item.ID, Barcode: bc}}
+			}
+
+			return nil
+		})
+		if err != nil {
+			GetLogger().Error("handleCreate transaction failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "failed to create item")
+			return
 		}
 
 		writeJSON(w, http.StatusCreated, item)
@@ -399,7 +414,7 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Transaction(func(tx *gorm.DB) error {
+		err = db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Where("item_id = ?", id).Delete(&ItemShelf{}).Error; err != nil {
 				return err
 			}
@@ -408,6 +423,10 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 			}
 			return tx.Delete(&item).Error
 		})
+		if err != nil {
+			errorJSON(w, http.StatusInternalServerError, "delete failed")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": true,
 			"hard":    true,

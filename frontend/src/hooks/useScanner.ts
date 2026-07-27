@@ -8,6 +8,7 @@ import {
   SCANNER_DUPLICATE_COOLDOWN_MS,
   SCANNER_PROCESSING_TIMEOUT_MS,
   FEEDBACK_DISPLAY_MS,
+  MAX_QUANTITY,
 } from "../constants";
 
 interface Feedback {
@@ -128,6 +129,7 @@ export function useScanner(): ScannerControls {
         bumpItemsVersion();
         setFeedback({ type: "success" });
         clearFeedbackLater();
+        setQuantity(1);
         await collapseScanner();
         doneProcessing();
       } else if (mode() === "decrement") {
@@ -177,6 +179,7 @@ export function useScanner(): ScannerControls {
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
+      setQuantity(1);
       setExpanded(false);
     } catch (err: unknown) {
       const error = err as { status?: number; item?: Item };
@@ -198,21 +201,32 @@ export function useScanner(): ScannerControls {
     setLinkBarcode(bc || null);
   }
 
-  /** Confirm link: attach the barcode to the selected item */
+  /** Confirm link: attach the barcode to the selected item, then scan it. */
   async function handleConfirmLink(itemId: number) {
     const bc = linkBarcode();
     setLinkBarcode(null);
     doneProcessing();
+    // Step 1: link the barcode
     try {
       await api.linkBarcode(itemId, bc!);
+    } catch (err) {
+      setFeedback({ type: "error" });
+      clearFeedbackLater();
+      return;
+    }
+    // Step 2: scan the newly linked barcode
+    try {
       await api.scan(bc!, mode(), quantity(), selectedShelfId());
       bumpItemsVersion();
       setFeedback({ type: "success" });
       clearFeedbackLater();
+      setQuantity(1);
       setExpanded(false);
     } catch (err) {
+      // Barcode linked but scan failed — partial success
       setFeedback({ type: "error" });
       clearFeedbackLater();
+      if (import.meta.env.DEV) console.error("scan after link failed:", err);
     }
   }
 

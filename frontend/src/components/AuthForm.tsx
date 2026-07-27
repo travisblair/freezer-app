@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { api } from "../api";
 import { setNeedsAuth } from "../store";
+import type { ApiError } from "../types";
 
 export default function AuthForm() {
   const [email, setEmail] = createSignal("");
@@ -19,7 +20,7 @@ export default function AuthForm() {
       await api.authenticate(eVal, pVal);
       setNeedsAuth(false);
     } catch (err: unknown) {
-      const apiErr = err as { status?: number };
+      const apiErr = err as ApiError;
       setError(apiErr.status === 401 ? "Invalid email or password" : "Connection failed");
     }
   }

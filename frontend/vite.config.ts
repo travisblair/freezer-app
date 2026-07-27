@@ -20,13 +20,16 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
     exclude: ["e2e/**", "node_modules/**"],
-    resolve: {
-      conditions: ["browser", "development"],
-    },
     server: {
       deps: {
-        inline: ["solid-js"],
+        inline: ["solid-js", "@solidjs/testing-library", /solid-js/],
       },
     },
+  },
+  resolve: {
+    conditions: ["browser", "development"],
+  },
+  ssr: {
+    noExternal: ["solid-js", "@solidjs/testing-library"],
   },
 });

@@ -12,11 +12,13 @@ import { useItemActions } from "../hooks/useItemActions";
 import ConfirmModal from "./ConfirmModal";
 import EditModal from "./EditModal";
 import MoveModal from "./MoveModal";
+import BulkMoveModal from "./BulkMoveModal";
+import type { BulkMoveItemData } from "./BulkMoveModal";
 
 type ShelfMap = Map<number, Map<number, number>>;
 
 export default function ItemTable() {
-  const { loading, shelves, lists, allShelves, handleSearchInput, loadItems } = useItemSearch();
+  const { loading, shelves, lists, allShelves, handleSearchInput, clearSearch, loadItems } = useItemSearch();
   const a = useItemActions();
 
   const [selShelf, setSelShelf] = createSignal<number | null>(null);
@@ -24,6 +26,7 @@ export default function ItemTable() {
   const [newName, setNewName] = createSignal("");
   const [renameId, setRenameId] = createSignal<number | null>(null);
   const [moveState, setMoveState] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);
+  const [bulkMoveItems, setBulkMoveItems] = createSignal<BulkMoveItemData[] | null>(null);
   const [renameVal, setRenameVal] = createSignal("");
 
   // Per-row kebab state — a simple number tracking which rowKey is open
@@ -41,6 +44,35 @@ export default function ItemTable() {
       m.set(item.id, im);
     }
     return m;
+  }
+
+  /** Compute bulk move data from selected items + current shelf filter */
+  function getBulkMoveData(): BulkMoveItemData[] {
+    const sids = new Set(selectedIds());
+    const sm = smap();
+    const result: BulkMoveItemData[] = [];
+    const filterShelf = selShelf();
+    for (const item of items()) {
+      if (!sids.has(item.id)) continue;
+      const im = sm.get(item.id);
+      if (!im || im.size === 0) continue;
+      let sourceShelfId: number;
+      if (filterShelf !== null && im.has(filterShelf)) {
+        sourceShelfId = filterShelf;
+      } else {
+        // Pick shelf with most stock
+        let best = 0;
+        let bestId = 0;
+        for (const [sid, cnt] of im) {
+          if (cnt > best) { best = cnt; bestId = sid; }
+        }
+        sourceShelfId = bestId || [...im.keys()][0];
+      }
+      const shelfName = shelves().find(s => s.id === sourceShelfId)?.name || `Shelf ${sourceShelfId}`;
+      const count = im.get(sourceShelfId) ?? 0;
+      result.push({ itemId: item.id, name: item.name, sourceShelfId, sourceShelfName: shelfName, count });
+    }
+    return result;
   }
 
   function toggle(id: number) {
@@ -96,7 +128,19 @@ export default function ItemTable() {
     <div>
       <div class="grid mb-1">
         <div>
-          <input type="search" placeholder="Search by name..." value={searchQuery()} onInput={handleSearchInput} class="no-mb" />
+          <div style="position:relative;display:inline-block;width:100%">
+            <input type="search" placeholder="Search by name..." value={searchQuery()} onInput={handleSearchInput} class="no-mb" />
+            <Show when={searchQuery()}>
+              <button
+                type="button"
+                class="outline search-clear-btn"
+                onClick={clearSearch}
+                aria-label="Clear search"
+              >
+                ✕
+              </button>
+            </Show>
+          </div>
         </div>
         <div class="table-controls">
           <label>
@@ -120,6 +164,7 @@ export default function ItemTable() {
         <div class="bulk-actions">
           <span>{selectedIds().length} selected</span>
           <button type="button" class="secondary" onClick={() => a.setConfirmDelete({ type: "bulk" })}>Delete Selected</button>
+          <button type="button" class="secondary" onClick={() => setBulkMoveItems(getBulkMoveData())}>Move Selected</button>
           <button type="button" class="outline" onClick={clearSelection}>Clear</button>
         </div>
       </Show>
@@ -264,6 +309,20 @@ export default function ItemTable() {
             loadItems();
           }}
           onCancel={() => setMoveState(null)}
+        />
+      </Show>
+
+      <Show when={bulkMoveItems()}>
+        <BulkMoveModal
+          items={bulkMoveItems()!}
+          allShelves={allShelves()}
+          lists={lists()}
+          onDone={() => {
+            setBulkMoveItems(null);
+            clearSelection();
+            loadItems();
+          }}
+          onCancel={() => setBulkMoveItems(null)}
         />
       </Show>
     </div>

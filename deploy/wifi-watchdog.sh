@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ── WiFi Watchdog ──────────────────────────────────────────────────────
+# ── WiFi Watchdog ──────────────────────────────────────────────
 # Pings the gateway every run. 3 consecutive failures = reboot.
+# Also pins BSSID to prevent mesh roaming to broken nodes.
 #
 # Install: sudo cp deploy/wifi-watchdog.* /etc/systemd/system/
 #           sudo systemctl daemon-reload
@@ -12,6 +13,14 @@ set -euo pipefail
 GATEWAY="192.168.50.1"
 MAX_FAILS=3
 COUNTER_FILE="/tmp/wifi-fail-count"
+PINNED_BSSID="cc:28:aa:5f:ff:52"
+
+# Pin BSSID to known-good mesh node (prevents roaming to broken AP)
+CURRENT=$(/sbin/wpa_cli -i wlan0 get_network 0 bssid 2>/dev/null || echo "FAIL")
+if [ "$CURRENT" != "$PINNED_BSSID" ]; then
+    /sbin/wpa_cli -i wlan0 set_network 0 bssid "$PINNED_BSSID" 2>/dev/null || true
+    logger -t wifi-watchdog "BSSID pinned: $CURRENT → $PINNED_BSSID"
+fi
 
 # Ping gateway 3 times, 2s timeout each. All must fail to count as failure.
 if ping -c 3 -W 2 "$GATEWAY" > /dev/null 2>&1; then

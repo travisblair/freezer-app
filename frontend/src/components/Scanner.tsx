@@ -1,4 +1,5 @@
 import { useScanner } from "../hooks/useScanner";
+import { MAX_QUANTITY } from "../constants";
 import ScanPromptForm from "./ScanPromptForm";
 import DuplicateOffer from "./DuplicateOffer";
 import LinkBarcode from "./LinkBarcode";
@@ -42,9 +43,10 @@ export default function Scanner() {
                 min="1"
                 max="9999"
                 value={sc.quantity()}
-                onInput={(e) =>
-                  sc.setQuantity(parseInt((e.target as HTMLInputElement).value, 10) || 1)
-                }
+                onInput={(e) => {
+                  const v = parseInt((e.target as HTMLInputElement).value, 10) || 1;
+                  sc.setQuantity(Math.max(1, Math.min(v, MAX_QUANTITY)));
+                }}
                 class="no-mb"
               />
             </label>

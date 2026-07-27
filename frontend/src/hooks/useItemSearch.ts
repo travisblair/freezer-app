@@ -17,6 +17,7 @@ export interface ItemSearchControls {
   lists: () => List[];
   allShelves: () => Shelf[];
   handleSearchInput: (e: InputEvent) => void;
+  clearSearch: () => void;
   loadItems: () => Promise<void>;
 }
 
@@ -65,6 +66,12 @@ export function useItemSearch(): ItemSearchControls {
     }
   }
 
+  function clearSearch() {
+    setSearchQuery("");
+    setDebouncedSearch("");
+    if (debounceTimer) clearTimeout(debounceTimer);
+  }
+
   async function loadItems() {
     setLoading(true);
     try {
@@ -92,5 +99,5 @@ export function useItemSearch(): ItemSearchControls {
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
-  return { loading, shelves, lists, allShelves, handleSearchInput, loadItems };
+  return { loading, shelves, lists, allShelves, handleSearchInput, clearSearch, loadItems };
 }
