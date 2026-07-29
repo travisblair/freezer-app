@@ -815,7 +815,12 @@ func handleUpdateList(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusBadRequest, "name must be non-empty (≤ 100 chars)")
 			return
 		}
-		db.Model(&list).Update("name", name)
+		result := db.Model(&list).Update("name", name)
+		if result.Error != nil {
+			GetLogger().Error("updateList failed for list %d: %v", list.ID, result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to update list")
+			return
+		}
 		writeJSON(w, http.StatusOK, list)
 	}
 }
