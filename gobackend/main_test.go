@@ -879,17 +879,17 @@ func TestAuthNewLoginInvalidatesOldSession(t *testing.T) {
 		t.Fatal("expected different session tokens")
 	}
 
-	// Old cookie should be invalid
+	// Both sessions should be valid (sessions table supports multi-device)
 	req, _ := http.NewRequest("GET", ts.URL+"/api/auth/check", nil)
 	req.AddCookie(oldCookie)
 	resp, _ = http.DefaultClient.Do(req)
 	var check map[string]bool
 	decodeJSON(t, resp, &check)
-	if check["authenticated"] {
-		t.Fatal("old session should be invalid after new login")
+	if !check["authenticated"] {
+		t.Fatal("old session should still be valid (multi-device support)")
 	}
 
-	// New cookie should work
+	// New cookie should also work
 	req, _ = http.NewRequest("GET", ts.URL+"/api/auth/check", nil)
 	req.AddCookie(newCookie)
 	resp, _ = http.DefaultClient.Do(req)

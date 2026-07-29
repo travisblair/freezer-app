@@ -28,4 +28,7 @@ func writeCSV(w http.ResponseWriter, rows [][]string) {
 		writer.Write(row)
 	}
 	writer.Flush()
+	if err := writer.Error(); err != nil {
+		GetLogger().Error("CSV write failed: %v", err)
+	}
 }

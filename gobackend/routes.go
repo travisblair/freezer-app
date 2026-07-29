@@ -238,6 +238,17 @@ func startRateLimiterCleanup() {
 	}()
 }
 
+// startSessionCleanup periodically deletes expired sessions.
+func startSessionCleanup(db *gorm.DB) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			db.Where("expires_at < ?", time.Now()).Delete(&Session{})
+		}
+	}()
+}
+
 // setupRoutes registers all API routes and static file serving on mux.
 // This is shared between main.go (production) and main_test.go (tests).
 func setupRoutes(mux *http.ServeMux, db *gorm.DB) {

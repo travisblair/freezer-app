@@ -103,6 +103,7 @@ func main() {
 	}()
 
 	startRateLimiterCleanup()
+	startSessionCleanup(db)
 
 	// Track startup time for heartbeat
 	startupTime = time.Now()

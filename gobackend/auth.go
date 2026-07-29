@@ -182,19 +182,6 @@ func clearAuthRateLimiters() {
 
 // ── Cookie helpers ─────────────────────────────────────────────────────
 
-func parseCookies(header string) map[string]string {
-	m := map[string]string{}
-	for _, pair := range strings.Split(header, ";") {
-		pair = strings.TrimSpace(pair)
-		eq := strings.IndexByte(pair, '=')
-		if eq == -1 {
-			continue
-		}
-		m[pair[:eq]] = pair[eq+1:]
-	}
-	return m
-}
-
 func getCookieName() string {
 	if name := os.Getenv("COOKIE_NAME"); name != "" {
 		return name
@@ -235,8 +222,11 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 }
 
 func getSessionToken(r *http.Request) string {
-	cookies := parseCookies(r.Header.Get("Cookie"))
-	return cookies[getCookieName()]
+	c, err := r.Cookie(getCookieName())
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────
@@ -303,8 +293,16 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		if err := db.Model(&user).Update("session_token", hashToken(token)).Error; err != nil {
-			GetLogger().Error("failed to save session token: %v", err)
+		now := time.Now()
+		session := Session{
+			UserID:    user.ID,
+			TokenHash: hashToken(token),
+			CreatedAt: now,
+			ExpiresAt: now.Add(30 * 24 * time.Hour),
+			CreatedIP: clientIP(r),
+		}
+		if err := db.Create(&session).Error; err != nil {
+			GetLogger().Error("failed to create session: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
@@ -322,8 +320,9 @@ func authCheckHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		var user User
-		if err := db.Where("session_token = ?", hashToken(token)).First(&user).Error; err != nil {
+		var session Session
+		now := time.Now()
+		if err := db.Where("token_hash = ? AND expires_at > ?", hashToken(token), now).First(&session).Error; err != nil {
 			writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 			return
 		}
@@ -336,7 +335,7 @@ func logoutHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := getSessionToken(r)
 		if token != "" {
-			db.Model(&User{}).Where("session_token = ?", hashToken(token)).Update("session_token", "")
+			db.Where("token_hash = ?", hashToken(token)).Delete(&Session{})
 		}
 		clearSessionCookie(w, r)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -352,8 +351,9 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 			return
 		}
 
-		var user User
-		if err := db.Where("session_token = ?", hashToken(token)).First(&user).Error; err != nil {
+		var session Session
+		now := time.Now()
+		if err := db.Where("token_hash = ? AND expires_at > ?", hashToken(token), now).First(&session).Error; err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 			return
 		}

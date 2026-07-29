@@ -46,7 +46,7 @@ Open `http://localhost:3000` in your browser. Sign in with your email and passwo
 
 | Layer | Tech |
 |---|---|
-| Backend | Go 1.26 (single binary, zero deps at runtime) |
+| Backend | Go 1.22+ (single binary, zero deps at runtime) |
 | Database | SQLite (pure Go, cross-compiles to ARM for Raspberry Pi) |
 | ORM | GORM with auto-migration |
 | Frontend | SolidJS + Pico CSS |

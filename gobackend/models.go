@@ -48,7 +48,19 @@ type User struct {
 	ID           uint   `gorm:"primaryKey" json:"id"`
 	Email        string `gorm:"not null;uniqueIndex" json:"email"`
 	PasswordHash string `gorm:"not null" json:"-"`
-	SessionToken string `gorm:"index" json:"-"`
+	SessionToken string `gorm:"index" json:"-"` // deprecated — kept for migration; replaced by sessions table
+}
+
+// Session represents an active user session.
+// Replaces the single SessionToken column on users with multi-device support,
+// expiry, and the ability to revoke all sessions per user.
+type Session struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"not null;index:idx_session_user" json:"userId"`
+	TokenHash string    `gorm:"not null;uniqueIndex" json:"-"` // SHA-256 of raw cookie token
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `gorm:"not null;index:idx_session_expires" json:"expiresAt"`
+	CreatedIP string    `json:"createdIp"`
 }
 
 // List represents a named inventory list (Freezer, Pantry, Kitchen, etc.).
