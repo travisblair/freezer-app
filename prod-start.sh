@@ -7,17 +7,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load .env if present (space-safe: parses KEY=value lines without bash word-splitting)
+# Load .env if present. Uses bash source to handle quoted values and
+# inline comments correctly (the file is trusted/local).
 if [ -f "$SCRIPT_DIR/.env" ]; then
-  while IFS='=' read -r key value; do
-    # Skip blank lines and comments
-    [ -z "$key" ] && continue
-    [[ "$key" =~ ^[[:space:]]*# ]] && continue
-    # Trim leading/trailing whitespace from key
-    key=$(echo "$key" | xargs)
-    # Export the variable
-    export "$key"="$value"
-  done < "$SCRIPT_DIR/.env"
+  set -a
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/.env"
+  set +a
 fi
 
 echo "==> Building frontend..."

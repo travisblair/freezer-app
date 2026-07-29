@@ -175,8 +175,13 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Atomic update on the ItemShelf row
-		db.Model(&ItemShelf{}).Where("id = ?", itemShelf.ID).Update("count",
+		result := db.Model(&ItemShelf{}).Where("id = ?", itemShelf.ID).Update("count",
 			gorm.Expr("MAX(0, count + ?)", delta))
+		if result.Error != nil {
+			GetLogger().Error("scan update failed for itemShelf %d: %v", itemShelf.ID, result.Error)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan update failed"})
+			return
+		}
 
 		// Reload item with updated shelves
 		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID).Error; err != nil {
@@ -306,7 +311,16 @@ func handleLinkBarcode(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Create(&ItemBarcode{ItemID: item.ID, Barcode: barcode})
+		result := db.Create(&ItemBarcode{ItemID: item.ID, Barcode: barcode})
+		if result.Error != nil {
+			if strings.Contains(result.Error.Error(), "UNIQUE") || strings.Contains(result.Error.Error(), "unique") {
+				errorJSON(w, http.StatusConflict, "Barcode already linked to another item")
+				return
+			}
+			GetLogger().Error("linkBarcode create failed: %v", result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to link barcode")
+			return
+		}
 		db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID)
 		writeJSON(w, http.StatusOK, item)
 	}
@@ -348,7 +362,12 @@ func handleUpdateItem(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Model(&item).Update("name", name)
+		result := db.Model(&item).Update("name", name)
+		if result.Error != nil {
+			GetLogger().Error("updateItem failed for item %d: %v", id, result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to update item")
+			return
+		}
 		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, id).Error; err != nil {
 			GetLogger().Error("failed to reload item %d after update: %v", id, err)
 			item.Name = name // at least return the name we just set
@@ -372,6 +391,10 @@ func handleBulkDelete(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusBadRequest, "ids must be a non-empty array")
 			return
 		}
+		if len(body.IDs) > 500 {
+			errorJSON(w, http.StatusBadRequest, "too many ids — maximum 500 per bulk delete")
+			return
+		}
 		result := db.Model(&ItemShelf{}).
 			Where("item_id IN ?", body.IDs).
 			Update("count", 0)
@@ -392,7 +415,10 @@ func handleDeleteByBarcode(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusNotFound, "item not found")
 			return
 		}
-		db.Model(&ItemShelf{}).Where("item_id = ?", link.ItemID).Update("count", 0)
+		result := db.Model(&ItemShelf{}).Where("item_id = ?", link.ItemID).Update("count", 0)
+		if result.Error != nil {
+			GetLogger().Error("deleteByBarcode update failed for item %d: %v", link.ItemID, result.Error)
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
 }
@@ -472,7 +498,12 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 		}
 
 		shelf := Shelf{Name: name, ListID: listID}
-		db.Create(&shelf)
+		result := db.Create(&shelf)
+		if result.Error != nil {
+			GetLogger().Error("createShelf failed: %v", result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to create shelf")
+			return
+		}
 		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "created"})
 		writeJSON(w, http.StatusCreated, shelf)
 	}
@@ -510,7 +541,13 @@ func handleUpdateShelf(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Model(&shelf).Update("name", name)
+		shelf.Name = name
+		result := db.Model(&shelf).Update("name", name)
+		if result.Error != nil {
+			GetLogger().Error("updateShelf failed for shelf %d: %v", shelf.ID, result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to update shelf")
+			return
+		}
 		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "renamed"})
 		writeJSON(w, http.StatusOK, shelf)
 	}
@@ -606,7 +643,12 @@ func handleSetShelfCount(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		db.Model(&is).Update("count", *body.Count)
+		result := db.Model(&is).Update("count", *body.Count)
+		if result.Error != nil {
+			GetLogger().Error("setShelfCount update failed for itemShelf %d: %v", is.ID, result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to update shelf count")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"id":    is.ID,
 			"count": *body.Count,
@@ -700,9 +742,9 @@ func handleExport(db *gorm.DB) http.HandlerFunc {
 			}
 			rows = append(rows, []string{
 				fmt.Sprintf("%d", item.ID),
-				escapeCSV(item.Name),
+				item.Name,
 				fmt.Sprintf("%d", total),
-				escapeCSV(strings.Join(barcodeStrs, "|")),
+				strings.Join(barcodeStrs, "|"),
 			})
 		}
 		writeCSV(w, rows)
@@ -734,7 +776,12 @@ func handleCreateList(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		l := List{Name: name}
-		db.Create(&l)
+		result := db.Create(&l)
+		if result.Error != nil {
+			GetLogger().Error("createList failed: %v", result.Error)
+			errorJSON(w, http.StatusInternalServerError, "failed to create list")
+			return
+		}
 		writeJSON(w, http.StatusCreated, l)
 	}
 }

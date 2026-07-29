@@ -102,6 +102,8 @@ func main() {
 		authCleanup()
 	}()
 
+	startRateLimiterCleanup()
+
 	// Track startup time for heartbeat
 	startupTime = time.Now()
 
@@ -246,17 +248,10 @@ func trustedOrigin(origin string) bool {
 			return true
 		}
 	}
-	// Tailscale Funnel — only allow the exact suffix .ts.net
-	// WARNING: any Tailscale user can create a .ts.net domain.
-	// Set TRUSTED_ORIGIN to pin to your specific hostname.
-	if strings.HasSuffix(origin, ".ts.net") {
-		if strings.HasPrefix(origin, "https://") {
-			return true
-		}
-		if strings.HasPrefix(origin, "http://") {
-			return true
-		}
-	}
+	// Tailscale Funnel — only allowed when TRUSTED_ORIGIN is explicitly set.
+	// Otherwise, any Tailscale user can mint a .ts.net domain and issue
+	// credentialed cross-origin requests against this server.
+	// The README already warns about this; we now enforce it.
 	return false
 }
 

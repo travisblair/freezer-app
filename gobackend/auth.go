@@ -184,13 +184,17 @@ func isSecure(r *http.Request) bool {
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, r *http.Request) {
+	name := getCookieName()
+	// If using a __Host- prefixed cookie, Secure must be true unconditionally
+	// per the cookie prefix spec — browsers silently drop it otherwise.
+	secure := isSecure(r) || strings.HasPrefix(name, "__Host-")
 	http.SetCookie(w, &http.Cookie{
-		Name:     getCookieName(),
+		Name:     name,
 		Value:    token,
 		Path:     "/",
 		MaxAge:   365 * 24 * 60 * 60,
 		HttpOnly: true,
-		Secure:   isSecure(r),
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

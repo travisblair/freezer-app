@@ -73,16 +73,29 @@ func globalRateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP extracts the client IP from the request, respecting X-Forwarded-For.
+// clientIP extracts the client IP from the request.
+// X-Forwarded-For is only trusted when RemoteAddr is the Tailscale Funnel
+// proxy (running on localhost). On LAN, RemoteAddr is used directly to
+// prevent spoofing of rate-limit and auth-delay bypasses.
 func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.Split(fwd, ",")[0]
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" && isTrustedProxy(r) {
+		return strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
 	ip := r.RemoteAddr
 	if i := strings.LastIndexByte(ip, ':'); i != -1 {
 		return ip[:i]
 	}
 	return ip
+}
+
+// isTrustedProxy returns true when the request comes from a proxy we trust
+// to set X-Forwarded-For (e.g., Tailscale Funnel running on localhost).
+func isTrustedProxy(r *http.Request) bool {
+	host := r.RemoteAddr
+	if i := strings.LastIndexByte(host, ':'); i != -1 {
+		host = host[:i]
+	}
+	return host == "127.0.0.1" || host == "::1"
 }
 
 // ── Scanner tarpit ──────────────────────────────────────────────────────
@@ -206,26 +219,32 @@ func clearRateLimiters() {
 	rateLimitersMu.Unlock()
 }
 
+// startRateLimiterCleanup periodically evicts stale entries from the
+// rate-limiter map to prevent unbounded memory growth from scanner traffic.
+func startRateLimiterCleanup() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			rateLimitersMu.Lock()
+			cutoff := time.Now().Add(-2 * time.Hour)
+			for ip, bucket := range rateLimiters {
+				if bucket.lastSeen.Before(cutoff) {
+					delete(rateLimiters, ip)
+				}
+			}
+			rateLimitersMu.Unlock()
+		}
+	}()
+}
+
 // setupRoutes registers all API routes and static file serving on mux.
 // This is shared between main.go (production) and main_test.go (tests).
 func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	// Public endpoints
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		sqlDB, err := db.DB()
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status": "unhealthy",
-				"error":  "database connection unavailable",
-			})
-			return
-		}
-		if err := sqlDB.Ping(); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status": "unhealthy",
-				"error":  "database ping failed",
-			})
-			return
-		}
+		// Cheap liveness check — no DB ping. This endpoint is hit by the
+		// frontend's offline banner retry and third-party health-checkers.
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/auth/check", authCheckHandler(db))
