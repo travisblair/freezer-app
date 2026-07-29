@@ -423,6 +423,8 @@ func handleDeleteByBarcode(db *gorm.DB) http.HandlerFunc {
 		result := db.Model(&ItemShelf{}).Where("item_id = ?", link.ItemID).Update("count", 0)
 		if result.Error != nil {
 			GetLogger().Error("deleteByBarcode update failed for item %d: %v", link.ItemID, result.Error)
+			errorJSON(w, http.StatusInternalServerError, "delete failed")
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
@@ -851,37 +853,53 @@ func handleDeleteList(db *gorm.DB) http.HandlerFunc {
 		}
 
 		// Cascade delete in a transaction
-		db.Transaction(func(tx *gorm.DB) error {
+		err = db.Transaction(func(tx *gorm.DB) error {
 			// Find all shelves in this list
 			var shelfIDs []uint
-			tx.Model(&Shelf{}).Where("list_id = ?", id).Pluck("id", &shelfIDs)
+			if err := tx.Model(&Shelf{}).Where("list_id = ?", id).Pluck("id", &shelfIDs).Error; err != nil {
+				return err
+			}
 
 			if len(shelfIDs) > 0 {
 				// Find all items on these shelves
 				var itemIDs []uint
-				tx.Model(&ItemShelf{}).Where("shelf_id IN ?", shelfIDs).Pluck("item_id", &itemIDs)
+				if err := tx.Model(&ItemShelf{}).Where("shelf_id IN ?", shelfIDs).Pluck("item_id", &itemIDs).Error; err != nil {
+					return err
+				}
 
 				// Delete barcodes for those items
 				if len(itemIDs) > 0 {
-					tx.Where("item_id IN ?", itemIDs).Delete(&ItemBarcode{})
+					if err := tx.Where("item_id IN ?", itemIDs).Delete(&ItemBarcode{}).Error; err != nil {
+						return err
+					}
 				}
 
 				// Delete ItemShelf rows
-				tx.Where("shelf_id IN ?", shelfIDs).Delete(&ItemShelf{})
+				if err := tx.Where("shelf_id IN ?", shelfIDs).Delete(&ItemShelf{}).Error; err != nil {
+					return err
+				}
 
-				// Delete items that only existed on these shelves (no remaining ItemShelf rows)
+				// Delete items that only existed on these shelves
 				if len(itemIDs) > 0 {
-					tx.Where("id IN ? AND id NOT IN (SELECT item_id FROM item_shelves)", itemIDs).Delete(&Item{})
+					if err := tx.Where("id IN ? AND id NOT IN (SELECT item_id FROM item_shelves)", itemIDs).Delete(&Item{}).Error; err != nil {
+						return err
+					}
 				}
 			}
 
 			// Delete shelves
-			tx.Where("list_id = ?", id).Delete(&Shelf{})
+			if err := tx.Where("list_id = ?", id).Delete(&Shelf{}).Error; err != nil {
+				return err
+			}
 
 			// Delete the list
 			return tx.Delete(&list).Error
 		})
 
-		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+		if err != nil {
+			GetLogger().Error("delete list transaction failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "failed to delete list")
+			return
+		}
 	}
 }
