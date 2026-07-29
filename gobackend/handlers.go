@@ -496,6 +496,12 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 		if listID == 0 {
 			listID = 1
 		}
+		// Validate the list exists
+		var list List
+		if db.First(&list, listID).Error != nil {
+			errorJSON(w, http.StatusBadRequest, "list does not exist")
+			return
+		}
 
 		shelf := Shelf{Name: name, ListID: listID}
 		result := db.Create(&shelf)
@@ -691,8 +697,8 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 				qty = source.Count
 			}
 
-			// Decrement source
-			if err := tx.Model(&source).Update("count", gorm.Expr("count - ?", qty)).Error; err != nil {
+			// Decrement source (MAX(0, ...) prevents negative counts defensively)
+			if err := tx.Model(&source).Update("count", gorm.Expr("MAX(0, count - ?)", qty)).Error; err != nil {
 				return err
 			}
 			if source.Count-qty <= 0 {

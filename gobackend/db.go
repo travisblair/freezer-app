@@ -66,7 +66,9 @@ func OpenDB() *gorm.DB {
 	}
 
 	// ── Seed default list ────────────────────────────────────────────────
-	db.FirstOrCreate(&List{}, List{Name: "Freezer"})
+	// Use ID: 1 to ensure the default Freezer list always occupies id 1,
+	// which is the hardcoded default throughout the app.
+	db.FirstOrCreate(&List{}, List{ID: 1, Name: "Freezer"})
 
 	// ── Data migration: existing items → Shelf 1 ──────────────────────────
 	// Ensure "Shelf 1" exists (default shelf, scoped to list 1 = Freezer)
