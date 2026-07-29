@@ -222,31 +222,27 @@ func clearRateLimiters() {
 // startRateLimiterCleanup periodically evicts stale entries from the
 // rate-limiter map to prevent unbounded memory growth from scanner traffic.
 func startRateLimiterCleanup() {
-	go func() {
-		ticker := time.NewTicker(30 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			rateLimitersMu.Lock()
-			cutoff := time.Now().Add(-2 * time.Hour)
-			for ip, bucket := range rateLimiters {
-				if bucket.lastSeen.Before(cutoff) {
-					delete(rateLimiters, ip)
-				}
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rateLimitersMu.Lock()
+		cutoff := time.Now().Add(-2 * time.Hour)
+		for ip, bucket := range rateLimiters {
+			if bucket.lastSeen.Before(cutoff) {
+				delete(rateLimiters, ip)
 			}
-			rateLimitersMu.Unlock()
 		}
-	}()
+		rateLimitersMu.Unlock()
+	}
 }
 
 // startSessionCleanup periodically deletes expired sessions.
 func startSessionCleanup(db *gorm.DB) {
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			db.Where("expires_at < ?", time.Now()).Delete(&Session{})
-		}
-	}()
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		db.Where("expires_at < ?", time.Now()).Delete(&Session{})
+	}
 }
 
 // setupRoutes registers all API routes and static file serving on mux.

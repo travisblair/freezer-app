@@ -398,6 +398,11 @@ func handleBulkDelete(db *gorm.DB) http.HandlerFunc {
 		result := db.Model(&ItemShelf{}).
 			Where("item_id IN ?", body.IDs).
 			Update("count", 0)
+		if result.Error != nil {
+			GetLogger().Error("bulkDelete update failed: %v", result.Error)
+			errorJSON(w, http.StatusInternalServerError, "bulk delete failed")
+			return
+		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": result.RowsAffected,

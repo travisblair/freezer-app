@@ -102,8 +102,23 @@ func main() {
 		authCleanup()
 	}()
 
-	startRateLimiterCleanup()
-	startSessionCleanup(db)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Rate limiter cleanup goroutine panicked: %v", r)
+			}
+		}()
+		startRateLimiterCleanup()
+	}()
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Session cleanup goroutine panicked: %v", r)
+			}
+		}()
+		startSessionCleanup(db)
+	}()
 
 	// Track startup time for heartbeat
 	startupTime = time.Now()

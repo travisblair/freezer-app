@@ -281,7 +281,9 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 
 		// Transparently upgrade hashes that use an older cost factor.
 		if rehashed, err := rehashIfNeeded(user.PasswordHash, body.Password); err == nil && rehashed != "" {
-			db.Model(&user).Update("password_hash", rehashed)
+			if err := db.Model(&user).Update("password_hash", rehashed).Error; err != nil {
+				GetLogger().Error("failed to persist rehashed password for user %d: %v", user.ID, err)
+			}
 		}
 
 		authRecordSuccess(ip)
