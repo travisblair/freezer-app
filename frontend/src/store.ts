@@ -8,6 +8,15 @@ export const [selectedIds, setSelectedIds] = createSignal<number[]>([]);
 export const [offline, setOffline] = createSignal(false);
 export const [currentListId, setCurrentListId] = createSignal(1);
 export const [lists, setLists] = createSignal<List[]>([]);
+export const [statusMessage, setStatusMessage] = createSignal("");
+
+/** Set a status message that auto-clears after 4 seconds. */
+export function flashStatus(msg: string): void {
+  setStatusMessage(msg);
+  setTimeout(() => {
+    if (statusMessage() === msg) setStatusMessage("");
+  }, 4000);
+}
 
 export const currentListName = createMemo(() => {
   return lists().find(l => l.id === currentListId())?.name || "Freezer";

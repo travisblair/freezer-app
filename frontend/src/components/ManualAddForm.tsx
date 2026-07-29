@@ -1,6 +1,6 @@
 import { createSignal, onMount } from "solid-js";
 import { api } from "../api";
-import { bumpItemsVersion } from "../store";
+import { bumpItemsVersion, flashStatus } from "../store";
 import type { Item, Shelf, StatusFeedback, DuplicateOfferData } from "../types";
 import StatusMessage from "./StatusMessage";
 import DuplicateOffer from "./DuplicateOffer";
@@ -19,7 +19,7 @@ export default function ManualAddForm() {
     try {
       const data = await api.getShelves(1);
       setShelves(data);
-    } catch (_) {}
+    } catch (_) { flashStatus("Failed to load shelves"); }
   });
 
   async function handleSubmit(e: Event) {

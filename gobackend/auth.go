@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	bcryptCost        = 8 // Pi Zero W friendly; still computationally expensive to brute-force
+	bcryptCost        = 10 // OWASP minimum; ~60-100ms on Pi Zero W
 	sessionTokenBytes = 32
 )
 
@@ -33,12 +34,34 @@ func checkPassword(hash, plaintext string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) == nil
 }
 
+// rehashIfNeeded returns a new bcrypt hash if the stored hash uses a cost
+// lower than the current bcryptCost. Returns empty string if no upgrade needed.
+func rehashIfNeeded(storedHash, plaintext string) (string, error) {
+	cost, err := bcrypt.Cost([]byte(storedHash))
+	if err != nil || cost >= bcryptCost {
+		return "", nil
+	}
+	bytes, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcryptCost)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
 func generateSessionToken() (string, error) {
 	b := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hashToken returns the SHA-256 hex digest of a session token.
+// Tokens are stored hashed in the DB so a leak doesn't yield live credentials.
+// The raw token lives only in the HttpOnly cookie.
+func hashToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
 }
 
 // ── Auth rate limiting ──────────────────────────────────────────────────
@@ -266,6 +289,11 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Transparently upgrade hashes that use an older cost factor.
+		if rehashed, err := rehashIfNeeded(user.PasswordHash, body.Password); err == nil && rehashed != "" {
+			db.Model(&user).Update("password_hash", rehashed)
+		}
+
 		authRecordSuccess(ip)
 
 		token, err := generateSessionToken()
@@ -275,7 +303,7 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		if err := db.Model(&user).Update("session_token", token).Error; err != nil {
+		if err := db.Model(&user).Update("session_token", hashToken(token)).Error; err != nil {
 			GetLogger().Error("failed to save session token: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
@@ -295,7 +323,7 @@ func authCheckHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var user User
-		if err := db.Where("session_token = ?", token).First(&user).Error; err != nil {
+		if err := db.Where("session_token = ?", hashToken(token)).First(&user).Error; err != nil {
 			writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 			return
 		}
@@ -308,7 +336,7 @@ func logoutHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := getSessionToken(r)
 		if token != "" {
-			db.Model(&User{}).Where("session_token = ?", token).Update("session_token", "")
+			db.Model(&User{}).Where("session_token = ?", hashToken(token)).Update("session_token", "")
 		}
 		clearSessionCookie(w, r)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -325,7 +353,7 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 		}
 
 		var user User
-		if err := db.Where("session_token = ?", token).First(&user).Error; err != nil {
+		if err := db.Where("session_token = ?", hashToken(token)).First(&user).Error; err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 			return
 		}

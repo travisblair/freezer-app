@@ -5,7 +5,7 @@ import { api } from "../api";
 import {
   items, searchQuery, showOutOfStock, setShowOutOfStock,
   selectedIds, selectedSet, toggleSelect, selectAll, clearSelection,
-  currentListId, setCurrentListId, setLists,
+  currentListId, setCurrentListId, setLists, flashStatus,
 } from "../store";
 import { useItemSearch } from "../hooks/useItemSearch";
 import { useItemActions } from "../hooks/useItemActions";
@@ -95,20 +95,20 @@ export default function ItemTable() {
     return r;
   }
 
-  async function reload() { try { await loadItems(); } catch (_) {} }
+  async function reload() { try { await loadItems(); } catch (_) { flashStatus("Failed to reload items"); } }
   async function createShelf(e: Event) {
     e.preventDefault(); const n = newName().trim();
     if (!n) return;
-    try { await api.createShelf(n, currentListId()); setNewName(""); await reload(); } catch (_) {}
+    try { await api.createShelf(n, currentListId()); setNewName(""); await reload(); } catch (_) { flashStatus("Failed to create shelf"); }
   }
   async function renameShelf(id: number) {
     const n = renameVal().trim();
     if (!n) return;
-    try { await api.updateShelf(id, n); setRenameId(null); await reload(); } catch (_) {}
+    try { await api.updateShelf(id, n); setRenameId(null); await reload(); } catch (_) { flashStatus("Failed to rename shelf"); }
   }
   async function delShelf(id: number) {
     if (id === 1) return;
-    try { await api.deleteShelf(id); await reload(); } catch (_) {}
+    try { await api.deleteShelf(id); await reload(); } catch (_) { flashStatus("Failed to delete shelf"); }
   }
 
   const vs = () => selShelf() === null ? shelves() : shelves().filter(s => s.id === selShelf());
@@ -120,7 +120,7 @@ export default function ItemTable() {
       try {
         await api.setShelfCount(shelfId, value);
         await loadItems();
-      } catch (_) {}
+      } catch (_) { flashStatus("Failed to update count"); }
     }, 400);
   }
 

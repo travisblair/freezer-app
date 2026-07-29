@@ -1,7 +1,7 @@
 import "@picocss/pico";
 import "./app.css";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { offline, needsAuth, setNeedsAuth, currentListId, setCurrentListId, currentListName, lists, setLists, clearSelection } from "./store";
+import { offline, needsAuth, setNeedsAuth, currentListId, setCurrentListId, currentListName, lists, setLists, clearSelection, statusMessage, flashStatus } from "./store";
 import { api } from "./api";
 import OfflineBanner from "./components/OfflineBanner";
 import AuthForm from "./components/AuthForm";
@@ -10,6 +10,7 @@ import ManualAddForm from "./components/ManualAddForm";
 import ItemTable from "./components/ItemTable";
 import PromptModal from "./components/PromptModal";
 import ConfirmModal from "./components/ConfirmModal";
+import StatusMessage from "./components/StatusMessage";
 
 export default function App() {
   const onAuthRequired = () => setNeedsAuth(true);
@@ -22,7 +23,7 @@ export default function App() {
       if (data.authenticated) {
         setNeedsAuth(false);
       }
-    } catch (_) {}
+    } catch (_) { flashStatus("Connection failed — retrying"); }
   });
 
   onCleanup(() => {
@@ -46,12 +47,13 @@ export default function App() {
       setCurrentListId(1);
       const fresh = await api.getLists();
       setLists(fresh);
-    } catch (_) {}
+    } catch (_) { flashStatus("Failed to delete list"); }
     setDeleteListId(null);
   }
 
   return (
     <main class="container app-container">
+      <StatusMessage message={statusMessage()} />
       <Show when={offline()}>
         <OfflineBanner />
       </Show>
