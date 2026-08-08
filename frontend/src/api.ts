@@ -1,6 +1,10 @@
 import { setOffline } from "./store";
 import { OFFLINE_FAILURE_THRESHOLD } from "./constants";
-import type { Item, Shelf, ApiError } from "./types";
+import type {
+  Item, Shelf, List, AuditLog, ApiError,
+  ScanResult, DeleteResult, MoveResult, AuthCheckResult, AuthResult,
+  HealthCheckResult, LookupResult,
+} from "./types";
 
 const BASE = "/api";
 
@@ -20,7 +24,7 @@ function trackOffline(ok: boolean): void {
   }
 }
 
-async function request(path: string, options: RequestInit = {}): Promise<unknown> {
+async function request<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -57,131 +61,130 @@ async function request(path: string, options: RequestInit = {}): Promise<unknown
     }) as ApiError;
   }
 
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("text/csv")) return res.blob();
+  if (res.headers.get("content-type")?.includes("text/csv")) {
+    return res.blob() as T;
+  }
 
-  return res.json();
+  return res.json() as T;
 }
 
 export const api = {
   /** Authenticate: send email + password, receive HttpOnly session cookie. */
-  authenticate(email: string, password: string): Promise<unknown> {
-    return request("/auth", {
+  authenticate(email: string, password: string): Promise<AuthResult> {
+    return request<AuthResult>("/auth", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
   },
 
-  getItem(barcode: string): Promise<{ found: boolean; [key: string]: unknown }> {
-    return request(`/item/${encodeURIComponent(barcode)}`) as Promise<{
-      found: boolean;
-      [key: string]: unknown;
-    }>;
+  check(): Promise<HealthCheckResult> {
+    return request<HealthCheckResult>("/health");
+  },
+
+  // ── Items ──────────────────────────────────────────────────────────
+
+  getItem(barcode: string): Promise<LookupResult> {
+    return request<LookupResult>(`/item/${encodeURIComponent(barcode)}`);
   },
 
   getItems(showOutOfStock = false, search = ""): Promise<Item[]> {
     const params = new URLSearchParams();
     if (showOutOfStock) params.set("showOutOfStock", "true");
     if (search) params.set("search", search);
-    return request(`/items?${params.toString()}`) as Promise<Item[]>;
+    return request<Item[]>(`/items?${params.toString()}`);
   },
 
   searchItems(query: string): Promise<Item[]> {
-    return request(`/search-items?q=${encodeURIComponent(query)}`) as Promise<Item[]>;
+    return request<Item[]>(`/search-items?q=${encodeURIComponent(query)}`);
   },
 
-  scan(barcode: string, mode: string, quantity: number, shelfId?: number): Promise<unknown> {
-    return request("/item/scan", {
+  scan(barcode: string, mode: string, quantity: number, shelfId?: number): Promise<ScanResult> {
+    return request<ScanResult>("/item/scan", {
       method: "POST",
       body: JSON.stringify({ barcode, mode, quantity, shelfId }),
     });
   },
 
   create(barcode: string | null, name: string, quantity: number, shelfId?: number): Promise<Item> {
-    return request("/item/create", {
+    return request<Item>("/item/create", {
       method: "POST",
       body: JSON.stringify({ barcode: barcode || null, name, quantity, shelfId }),
-    }) as Promise<Item>;
+    });
   },
 
-  linkBarcode(itemId: number, barcode: string): Promise<unknown> {
-    return request("/item/link-barcode", {
+  linkBarcode(itemId: number, barcode: string): Promise<Item> {
+    return request<Item>("/item/link-barcode", {
       method: "POST",
       body: JSON.stringify({ itemId, barcode }),
     });
   },
 
-  updateItem(id: number, fields: { name?: string }): Promise<unknown> {
-    return request(`/item/${id}`, {
+  updateItem(id: number, fields: { name?: string }): Promise<Item> {
+    return request<Item>(`/item/${id}`, {
       method: "PATCH",
       body: JSON.stringify(fields),
     });
   },
 
-  bulkDelete(ids: number[]): Promise<unknown> {
-    return request("/items/bulk-delete", {
+  bulkDelete(ids: number[]): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>("/items/bulk-delete", {
       method: "POST",
       body: JSON.stringify({ ids }),
     });
   },
 
-  deleteByBarcode(barcode: string): Promise<unknown> {
-    return request(`/item/${encodeURIComponent(barcode)}`, {
+  deleteByBarcode(barcode: string): Promise<DeleteResult> {
+    return request<DeleteResult>(`/item/${encodeURIComponent(barcode)}`, {
       method: "DELETE",
     });
   },
 
-  hardDelete(id: number): Promise<unknown> {
-    return request(`/item/hard/${id}`, { method: "DELETE" });
+  hardDelete(id: number): Promise<DeleteResult> {
+    return request<DeleteResult>(`/item/hard/${id}`, { method: "DELETE" });
   },
 
   exportCsv(): Promise<Blob> {
-    return request("/export") as Promise<Blob>;
-  },
-
-  /** Lightweight health check — used by the offline banner retry. */
-  check(): Promise<unknown> {
-    return request("/health") as Promise<unknown>;
+    return request<Blob>("/export");
   },
 
   // ── Shelves ─────────────────────────────────────────────────────────
 
   getShelves(listId?: number): Promise<Shelf[]> {
     const params = listId ? `?listId=${listId}` : "";
-    return request(`/shelves${params}`) as Promise<Shelf[]>;
+    return request<Shelf[]>(`/shelves${params}`);
   },
 
   allShelves(): Promise<Shelf[]> {
-    return request("/shelves") as Promise<Shelf[]>;
+    return request<Shelf[]>("/shelves");
   },
 
   createShelf(name: string, listId?: number): Promise<Shelf> {
-    return request("/shelves", {
+    return request<Shelf>("/shelves", {
       method: "POST",
       body: JSON.stringify({ name, listId }),
-    }) as Promise<Shelf>;
+    });
   },
 
   updateShelf(id: number, name: string): Promise<Shelf> {
-    return request(`/shelf/${id}`, {
+    return request<Shelf>(`/shelf/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ name }),
-    }) as Promise<Shelf>;
+    });
   },
 
-  deleteShelf(id: number): Promise<unknown> {
-    return request(`/shelf/${id}`, { method: "DELETE" });
+  deleteShelf(id: number): Promise<DeleteResult> {
+    return request<DeleteResult>(`/shelf/${id}`, { method: "DELETE" });
   },
 
-  setShelfCount(shelfId: number, count: number): Promise<unknown> {
-    return request(`/item-shelf/${shelfId}`, {
+  setShelfCount(shelfId: number, count: number): Promise<{ id: number; count: number }> {
+    return request<{ id: number; count: number }>(`/item-shelf/${shelfId}`, {
       method: "PATCH",
       body: JSON.stringify({ count }),
     });
   },
 
-  moveItem(itemId: number, sourceShelfId: number, targetShelfId: number, quantity: number): Promise<unknown> {
-    return request("/item-shelf/move", {
+  moveItem(itemId: number, sourceShelfId: number, targetShelfId: number, quantity: number): Promise<MoveResult> {
+    return request<MoveResult>("/item-shelf/move", {
       method: "POST",
       body: JSON.stringify({ itemId, sourceShelfId, targetShelfId, quantity }),
     });
@@ -189,35 +192,45 @@ export const api = {
 
   // ── Lists ───────────────────────────────────────────────────────────
 
-  getLists(): Promise<import("./types").List[]> {
-    return request("/lists") as Promise<import("./types").List[]>;
+  getLists(): Promise<List[]> {
+    return request<List[]>("/lists");
   },
 
-  createList(name: string): Promise<unknown> {
-    return request("/lists", {
+  createList(name: string): Promise<List> {
+    return request<List>("/lists", {
       method: "POST",
       body: JSON.stringify({ name }),
     });
   },
 
-  updateList(id: number, name: string): Promise<unknown> {
-    return request(`/lists/${id}`, {
+  updateList(id: number, name: string): Promise<List> {
+    return request<List>(`/lists/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ name }),
     });
   },
 
-  deleteList(id: number): Promise<unknown> {
-    return request(`/lists/${id}`, { method: "DELETE" });
+  deleteList(id: number): Promise<DeleteResult> {
+    return request<DeleteResult>(`/lists/${id}`, { method: "DELETE" });
   },
 
   // ── Notifications ───────────────────────────────────────────────────
 
-  getNotifications(since?: string, limit = 50): Promise<import("./types").AuditLog[]> {
+  getNotifications(since?: string, limit = 50): Promise<AuditLog[]> {
     const params = new URLSearchParams();
     if (since) params.set("since", since);
     params.set("limit", String(limit));
     params.set("actions", "create,delete,bulk_delete,hard_delete");
-    return request(`/notifications?${params.toString()}`) as Promise<import("./types").AuditLog[]>;
+    return request<AuditLog[]>(`/notifications?${params.toString()}`);
+  },
+
+  // ── Auth ─────────────────────────────────────────────────────────────
+
+  authCheck(): Promise<AuthCheckResult> {
+    return request<AuthCheckResult>("/auth/check");
+  },
+
+  logout(): Promise<AuthResult> {
+    return request<AuthResult>("/auth/logout", { method: "POST" });
   },
 };

@@ -1,11 +1,23 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// auditDetails builds a JSON string from a map, safe against injection.
+// Unlike fmt.Sprintf with raw user values, json.Marshal properly escapes
+// quotes, backslashes, and control characters in keys and values.
+func auditDetails(args map[string]any) string {
+	b, err := json.Marshal(args)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
 
 // logAudit creates an audit log entry. Call after every successful mutation.
 // Logs are fire-and-forget — failures are logged but never fail the handler.

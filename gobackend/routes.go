@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,19 +82,19 @@ func clientIP(r *http.Request) string {
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" && isTrustedProxy(r) {
 		return strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
-	ip := r.RemoteAddr
-	if i := strings.LastIndexByte(ip, ':'); i != -1 {
-		return ip[:i]
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr // no port, or malformed
 	}
-	return ip
+	return host
 }
 
 // isTrustedProxy returns true when the request comes from a proxy we trust
 // to set X-Forwarded-For (e.g., Tailscale Funnel running on localhost).
 func isTrustedProxy(r *http.Request) bool {
-	host := r.RemoteAddr
-	if i := strings.LastIndexByte(host, ':'); i != -1 {
-		host = host[:i]
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
 	return host == "127.0.0.1" || host == "::1"
 }
@@ -104,12 +105,18 @@ func isTrustedProxy(r *http.Request) bool {
 // paths.  Instead of serving a 200 (SPA fallback) or 404, we stream a slow
 // JSON response that ties up their connection for up to 10 minutes.
 //
+// This is INTENTIONALLY adversarial.  We are trading bounded server
+// resources for scanner friction — a reasonable choice for a personal
+// home server.  The fake JSON contains no real config, secrets, or file
+// contents.  It looks like what scanners want to see, and wastes their time.
+//
 // Resource caps (Pi Zero safe):
 //   - 5 concurrent tarpit connections (buffered channel semaphore)
 //   - 512 bytes flushed every 1s
 //   - Max 10 minutes per connection
 //   - ~300 KB per connection, ~1.5 MB worst-case total
 //   - When all slots are full, new probes get nothing (connection hangs)
+//   - Context cancellation on client disconnect or server shutdown
 
 var tarpitSlots = make(chan struct{}, 5)
 

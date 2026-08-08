@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // writeJSON sends a JSON response with the given status code.
@@ -18,6 +19,24 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 // errorJSON sends a JSON error response.
 func errorJSON(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// csvSafe prefixes a cell value with a single quote if it starts with a
+// character that triggers formula execution in Excel/LibreOffice (=, +, -, @).
+func csvSafe(s string) string {
+	if len(s) > 0 && (s[0] == '=' || s[0] == '+' || s[0] == '-' || s[0] == '@') {
+		return "'" + s
+	}
+	return s
+}
+
+// escapeLike escapes SQL LIKE wildcards (% and _) and the escape character itself.
+// Use this when building LIKE patterns from user input to prevent surprise matches.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
 }
 
 // writeCSV writes a CSV response with proper headers.

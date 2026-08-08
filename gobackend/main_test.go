@@ -1453,3 +1453,219 @@ func TestListScoping(t *testing.T) {
 		}
 	}
 }
+
+// ── Invariant tests (post-review fixes) ────────────────────────────────
+
+func TestCannotDeleteDefaultList(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "DELETE", "/api/lists/1", nil, true)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeleteListReturnsJSON(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]string{"name": "DeleteMe"}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var list List
+	decodeJSON(t, resp, &list)
+	if list.ID == 0 {
+		t.Fatal("list not created")
+	}
+
+	resp = doJSON(t, ts, "DELETE", "/api/lists/"+fmt.Sprintf("%d", list.ID), nil, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var result map[string]bool
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("expected valid JSON response, got decode error: %v", err)
+	}
+	if !result["deleted"] {
+		t.Fatal("expected deleted=true in response")
+	}
+}
+
+func TestItemCanExistInMultipleLists(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Create list 2
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]string{"name": "Pantry"}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var list2 List
+	decodeJSON(t, resp, &list2)
+
+	// Create shelf in list 2
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{"name": "Pantry Shelf", "listId": list2.ID}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var shelf2 Shelf
+	decodeJSON(t, resp, &shelf2)
+
+	// Create item in list 1, shelf 1
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{"name": "KD", "quantity": 3, "shelfId": 1}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var item Item
+	decodeJSON(t, resp, &item)
+
+	// Move some KD from shelf 1 (list 1) to pantry shelf (list 2) — this should work
+	resp = doJSON(t, ts, "POST", "/api/item-shelf/move", map[string]interface{}{
+		"itemId":        item.ID,
+		"sourceShelfId": 1,
+		"targetShelfId": shelf2.ID,
+		"quantity":      1,
+	}, true)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("cross-list move should be allowed (KD in both pantries), got %d", resp.StatusCode)
+	}
+
+	// Verify item now exists on both shelves
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var items []Item
+	decodeJSON(t, resp, &items)
+
+	for _, it := range items {
+		if it.Name == "KD" {
+			if len(it.Shelves) != 2 {
+				t.Fatalf("expected KD on 2 shelves, got %d", len(it.Shelves))
+			}
+			return
+		}
+	}
+	t.Fatal("KD not found")
+}
+
+func TestDeleteShelfPreservesListBoundary(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]string{"name": "Pantry"}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var list2 List
+	decodeJSON(t, resp, &list2)
+
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{"name": "Pantry Shelf A", "listId": list2.ID}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var shelfA Shelf
+	decodeJSON(t, resp, &shelfA)
+
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{"name": "Pantry Shelf B", "listId": list2.ID}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var shelfB Shelf
+	decodeJSON(t, resp, &shelfB)
+
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{"name": "Rice", "quantity": 3, "shelfId": shelfB.ID}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	resp = doJSON(t, ts, "DELETE", "/api/shelf/"+fmt.Sprintf("%d", shelfB.ID), nil, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var items []Item
+	decodeJSON(t, resp, &items)
+
+	for _, item := range items {
+		if item.Name == "Rice" {
+			for _, s := range item.Shelves {
+				if s.ShelfID == uint(shelfA.ID) {
+					return // item merged to same-list default shelf
+				}
+				if s.ShelfID == 1 {
+					t.Fatal("item moved to list 1 shelf instead of same-list default shelf")
+				}
+			}
+		}
+	}
+	t.Fatal("rice item not found")
+}
+
+func TestCSVEscapesFormula(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "=HYPERLINK(\"https://evil.example\")", "quantity": 1, "shelfId": 1,
+	}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/export", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	csvStr := buf.String()
+
+	if !strings.Contains(csvStr, "'=HYPERLINK") {
+		t.Fatalf("expected CSV to escape formula with leading quote, got: %s", csvStr)
+	}
+}
+
+func TestAuditJSONIsValid(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": `Test "Quotes" & Backslash \ Item`, "quantity": 1, "shelfId": 1,
+	}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var item Item
+	decodeJSON(t, resp, &item)
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/notifications", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+
+	var logs []AuditLog
+	decodeJSON(t, resp, &logs)
+
+	for _, log := range logs {
+		if log.Action == "create" && log.EntityName == item.Name {
+			var details map[string]interface{}
+			if err := json.Unmarshal([]byte(log.Details), &details); err != nil {
+				t.Fatalf("audit details is not valid JSON: %s (error: %v)", log.Details, err)
+			}
+			if details["name"] != nil {
+				// "name" key not used in create audit — check for expected keys
+			}
+			// Verify core fields are present and properly escaped
+			if _, ok := details["barcode"]; !ok {
+				t.Fatalf("audit details missing barcode field")
+			}
+			return
+		}
+	}
+	t.Fatal("audit log for created item not found")
+}

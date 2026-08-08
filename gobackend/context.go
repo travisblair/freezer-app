@@ -8,16 +8,19 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
+// AuthUser holds the authenticated user's identity, injected into the request
+// context by requireAuth middleware for use by handlers and audit logging.
+type AuthUser struct {
+	UserID uint
+	Name   string
+}
+
 // userFromContext extracts the authenticated user from the request context.
 // Returns zero values if no user is present (unauthenticated request).
 func userFromContext(r *http.Request) (userID uint, userName string) {
-	u := r.Context().Value(userContextKey)
-	if u == nil {
+	u, ok := r.Context().Value(userContextKey).(AuthUser)
+	if !ok {
 		return 0, ""
 	}
-	info := u.(struct {
-		UserID uint
-		Name   string
-	})
-	return info.UserID, info.Name
+	return u.UserID, u.Name
 }

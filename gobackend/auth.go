@@ -203,7 +203,7 @@ func setSessionCookie(w http.ResponseWriter, token string, r *http.Request) {
 		Name:     name,
 		Value:    token,
 		Path:     "/",
-		MaxAge:   365 * 24 * 60 * 60,
+		MaxAge:   30 * 24 * 60 * 60, // Match DB session ExpiresAt
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
@@ -269,7 +269,9 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 			authRecordFailure(ip)
 			// Don't reveal whether the email exists — compare against a real bcrypt hash
 			// to keep timing consistent with successful password checks.
-			checkPassword("$2a$08$QkJCSEdFV0ZIRkxHREpBROTzgImIEMMwA4B3tA/tO5FLyC/YyRDoG", body.Password)
+			// Cost must match bcryptCost (10) — a cost-8 hash runs ~4x faster
+			// and leaks whether the email exists via timing.
+			checkPassword("$2a$10$kitPPtN6TG3UfkQdLToe1ueKOa9Z/XA8mSEO2Qri7k6fgwF8e7YxW", body.Password)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 			return
 		}
@@ -370,10 +372,7 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userContextKey, struct {
-			UserID uint
-			Name   string
-		}{
+		ctx := context.WithValue(r.Context(), userContextKey, AuthUser{
 			UserID: user.ID,
 			Name:   user.Name,
 		})
@@ -385,6 +384,7 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 // Requires Content-Type: application/json for POST/PUT/PATCH/DELETE requests.
 // Simple forms cannot set this header across origins without a CORS preflight,
 // providing effective CSRF defense when combined with SameSite=Strict cookies.
+// Also limits request body to 1 MB to prevent resource exhaustion on the Pi.
 func csrfProtect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
@@ -396,6 +396,7 @@ func csrfProtect(next http.Handler) http.Handler {
 				})
 				return
 			}
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 		}
 		next.ServeHTTP(w, r)
 	})

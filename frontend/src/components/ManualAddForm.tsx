@@ -5,7 +5,7 @@ import type { Item, Shelf, StatusFeedback, DuplicateOfferData } from "../types";
 import StatusMessage from "./StatusMessage";
 import DuplicateOffer from "./DuplicateOffer";
 
-export default function ManualAddForm() {
+export default function ManualAddForm(props: { listId: number }) {
   const [name, setName] = createSignal("");
   const [barcode, setBarcode] = createSignal("");
   const [quantity, setQuantity] = createSignal(1);
@@ -17,7 +17,7 @@ export default function ManualAddForm() {
 
   onMount(async () => {
     try {
-      const data = await api.getShelves(1);
+      const data = await api.getShelves(props.listId);
       setShelves(data);
     } catch (_) { flashStatus("Failed to load shelves"); }
   });

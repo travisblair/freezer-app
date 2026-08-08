@@ -7,9 +7,9 @@ export function totalCount(item: Item): number {
 }
 
 /** Return the first shelf ID for an item, falling back to 1. */
-export function getFirstShelfId(item: { shelves?: { shelfId: number }[] }): number {
+export function getFirstShelfId(item: { shelves?: Partial<import("./types").ItemShelf>[] }): number {
   if (item.shelves && item.shelves.length > 0) {
-    return item.shelves[0].shelfId;
+    return item.shelves[0].shelfId ?? 1;
   }
   return 1;
 }

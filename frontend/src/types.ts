@@ -67,3 +67,46 @@ export interface AuditLog {
   details: string;
   created_at: string;
 }
+
+// ── API response types ─────────────────────────────────────────────────
+
+export interface ScanResult {
+  action: "updated" | "create";
+  item?: Item;
+  barcode?: string;
+}
+
+export interface CreateResult {
+  error?: string;
+  item?: Item;
+}
+
+export interface DeleteResult {
+  deleted: boolean;
+  hard?: boolean;
+}
+
+export interface MoveResult {
+  moved: number;
+}
+
+export interface AuthCheckResult {
+  authenticated: boolean;
+}
+
+export interface AuthResult {
+  ok: boolean;
+}
+
+export interface HealthCheckResult {
+  status: string;
+}
+
+export interface LinkBarcodeResult {
+  item: Item;
+}
+
+export interface LookupResult {
+  found: boolean;
+  item?: Item;
+}

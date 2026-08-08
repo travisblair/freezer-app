@@ -5,6 +5,7 @@ import "time"
 // Item represents a freezer inventory item.
 // No count or deleted — quantities are per-shelf via ItemShelf.
 // An item is "out of stock" when SUM(item_shelves.count) = 0.
+// An item can exist on shelves in multiple lists (e.g. KD in upstairs and downstairs pantries).
 type Item struct {
 	ID        uint          `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time     `json:"createdAt"`

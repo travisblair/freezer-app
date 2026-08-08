@@ -46,7 +46,7 @@ Open `http://localhost:3000` in your browser. Sign in with your email and passwo
 
 | Layer | Tech |
 |---|---|
-| Backend | Go 1.22+ (single binary, zero deps at runtime) |
+| Backend | Go 1.26+ (single binary, zero deps at runtime) |
 | Database | SQLite (pure Go, cross-compiles to ARM for Raspberry Pi) |
 | ORM | GORM with auto-migration |
 | Frontend | SolidJS + Pico CSS |
@@ -55,7 +55,7 @@ Open `http://localhost:3000` in your browser. Sign in with your email and passwo
 
 ## Requirements
 
-- **Go 1.22+** (for stdlib routing)
+- **Go 1.26+** (for stdlib routing)
 - **Node.js 18+** (for frontend build and E2E tests)
 - **npm** (for Vite and Playwright)
 
@@ -97,6 +97,11 @@ npx playwright test
 
 - GORM handles all database migrations. Add fields to models, `AutoMigrate` does the rest.
 - Never write raw SQL — use GORM's query builder.
-- Auth uses bcrypt with cost 8 (tuned for Pi Zero W). Session tokens are 256-bit crypto/rand.
-- The `__Host-` cookie prefix is intentional — browsers enforce `secure` and `path=/`.
+- Auth uses bcrypt with cost 10 (OWASP minimum). Session tokens are 256-bit crypto/rand.
+- The default `__Host-` cookie prefix enforces `Secure` and `path=/` per spec.
+  For plain-HTTP LAN access (e.g. `http://192.168.x.x`), set `COOKIE_NAME=freezer_token`
+  in `.env` to bypass the `__Host-` requirements. Production (Tailscale Funnel HTTPS)
+  should use the default.
+- All authenticated users have full access to all inventory — there is no per-user
+  isolation. Authentication is identity, not authorization at this time.
 - No dependencies are committed. Run `npm install` in `frontend/` after cloning.

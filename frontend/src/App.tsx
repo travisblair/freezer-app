@@ -173,7 +173,7 @@ export default function App() {
         </section>
 
         <section class="section-gap">
-          <ManualAddForm />
+          <ManualAddForm listId={currentListId()} />
         </section>
 
         <section>

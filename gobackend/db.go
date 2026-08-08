@@ -10,6 +10,11 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const (
+	DefaultListID  = 1 // Seeded Freezer list — do not delete
+	DefaultShelfID = 1 // Seeded Shelf 1 in list 1 — do not delete
+)
+
 // OpenDB initializes the SQLite database with GORM.
 // Uses pure-Go SQLite (no CGO) for easy ARM64 cross-compilation.
 // The DB_PATH is relative to the binary unless absolute.
@@ -66,9 +71,8 @@ func OpenDB() *gorm.DB {
 	}
 
 	// ── Seed default list ────────────────────────────────────────────────
-	// Use ID: 1 to ensure the default Freezer list always occupies id 1,
-	// which is the hardcoded default throughout the app.
-	db.FirstOrCreate(&List{}, List{ID: 1, Name: "Freezer"})
+	// Use ID: 1 to ensure the default Freezer list always occupies id 1.
+	db.FirstOrCreate(&List{}, List{ID: DefaultListID, Name: "Freezer"})
 
 	// ── Data migration: existing items → Shelf 1 ──────────────────────────
 	// Ensure "Shelf 1" exists (default shelf, scoped to list 1 = Freezer)
@@ -78,9 +82,9 @@ func OpenDB() *gorm.DB {
 		db.Create(&shelf1)
 	}
 
-	// One-time: move existing item counts into ItemShelf rows, but only
-	// if the old `count` column is still present on the `items` table.
-	// After AutoMigrate drops the column, this becomes a harmless no-op.
+	// One-time: move existing item counts from the old `items.count` column
+	// into ItemShelf rows. GORM AutoMigrate adds columns but never drops
+	// them, so `count` persists. The `NOT IN` guard makes this idempotent.
 	var hasCount bool
 	db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasCount)
 	if hasCount {

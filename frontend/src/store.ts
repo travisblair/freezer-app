@@ -1,5 +1,5 @@
 import { createSignal, createMemo } from "solid-js";
-import type { Item, List } from "./types";
+import type { Item, List, StatusFeedback } from "./types";
 
 export const [items, setItems] = createSignal<Item[]>([]);
 export const [searchQuery, setSearchQuery] = createSignal("");
@@ -8,13 +8,14 @@ export const [selectedIds, setSelectedIds] = createSignal<number[]>([]);
 export const [offline, setOffline] = createSignal(false);
 export const [currentListId, setCurrentListId] = createSignal(1);
 export const [lists, setLists] = createSignal<List[]>([]);
-export const [statusMessage, setStatusMessage] = createSignal("");
+export const [statusMessage, setStatusMessage] = createSignal<StatusFeedback | null>(null);
 
 /** Set a status message that auto-clears after 4 seconds. */
-export function flashStatus(msg: string): void {
-  setStatusMessage(msg);
+export function flashStatus(msg: string, type: "success" | "error" = "error"): void {
+  const feedback: StatusFeedback = { type, text: msg };
+  setStatusMessage(feedback);
   setTimeout(() => {
-    if (statusMessage() === msg) setStatusMessage("");
+    if (statusMessage() === feedback) setStatusMessage(null);
   }, 4000);
 }
 
