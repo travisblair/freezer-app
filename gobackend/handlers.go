@@ -724,6 +724,10 @@ func handleSetShelfCount(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to update shelf count")
 			return
 		}
+		// Clean up zero-count rows — consistent with handleScan/handleMoveItem
+		if *body.Count == 0 {
+			db.Delete(&is)
+		}
 		logAudit(db, r, "set_count", "item_shelf", is.ID, fmt.Sprintf("itemShelf %d", is.ID),
 			auditDetails(map[string]any{"count": *body.Count}))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
