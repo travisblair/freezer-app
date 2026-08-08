@@ -347,9 +347,9 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 			relPath := strings.TrimPrefix(r.URL.Path, "/")
 			path := filepath.Join(frontendDist, relPath)
 
-			// Never cache index.html — forces iOS PWA to re-fetch
+			// Never cache index.html or sw.js — forces iOS PWA to re-fetch
 			// and discover new hashed JS/CSS assets on every load.
-			if r.URL.Path == "/" || relPath == "index.html" {
+			if r.URL.Path == "/" || relPath == "index.html" || relPath == "sw.js" {
 				w.Header().Set("Cache-Control", "no-cache")
 			}
 
