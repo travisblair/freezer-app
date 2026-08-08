@@ -54,3 +54,16 @@ export interface DeleteAction {
   id?: number;
   name?: string;
 }
+
+/** Audit log entry for the notification feed. */
+export interface AuditLog {
+  id: number;
+  user_id: number;
+  user_name: string;
+  action: string;
+  entity_type: string;
+  entity_id: number;
+  entity_name: string;
+  details: string;
+  created_at: string;
+}

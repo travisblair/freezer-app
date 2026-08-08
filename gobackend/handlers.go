@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -190,6 +191,21 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Get shelf name for audit log
+		var shelfName string
+		for _, s := range item.Shelves {
+			if s.ShelfID == targetShelfID {
+				var shelf Shelf
+				if err := db.First(&shelf, s.ShelfID).Error; err == nil {
+					shelfName = shelf.Name
+				}
+				break
+			}
+		}
+
+		logAudit(db, r, "scan", "item", item.ID, item.Name,
+			fmt.Sprintf(`{"shelf":"%s","mode":"%s","quantity":%d}`, shelfName, body.Mode, body.Quantity))
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"action": "updated",
 			"item":   item,
@@ -276,6 +292,9 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		logAudit(db, r, "create", "item", item.ID, item.Name,
+			fmt.Sprintf(`{"barcode":"%s","quantity":%d,"shelf_id":%d}`, bc, body.Quantity, shelfID))
+
 		writeJSON(w, http.StatusCreated, item)
 	}
 }
@@ -322,6 +341,8 @@ func handleLinkBarcode(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID)
+		logAudit(db, r, "link_barcode", "item", item.ID, item.Name,
+			fmt.Sprintf(`{"barcode":"%s"}`, barcode))
 		writeJSON(w, http.StatusOK, item)
 	}
 }
@@ -372,6 +393,7 @@ func handleUpdateItem(db *gorm.DB) http.HandlerFunc {
 			GetLogger().Error("failed to reload item %d after update: %v", id, err)
 			item.Name = name // at least return the name we just set
 		}
+		logAudit(db, r, "update", "item", item.ID, item.Name, fmt.Sprintf(`{"name":"%s"}`, name))
 		writeJSON(w, http.StatusOK, item)
 	}
 }
@@ -404,6 +426,9 @@ func handleBulkDelete(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		logAudit(db, r, "delete", "item", 0, fmt.Sprintf("%d items", len(body.IDs)),
+			fmt.Sprintf(`{"ids":%v}`, body.IDs))
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": result.RowsAffected,
 		})
@@ -426,6 +451,8 @@ func handleDeleteByBarcode(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "delete failed")
 			return
 		}
+		logAudit(db, r, "delete", "item", link.ItemID, barcode,
+			fmt.Sprintf(`{"barcode":"%s"}`, barcode))
 		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
 }
@@ -460,6 +487,7 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "delete failed")
 			return
 		}
+		logAudit(db, r, "hard_delete", "item", item.ID, item.Name, "")
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": true,
 			"hard":    true,
@@ -518,6 +546,7 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "created"})
+		logAudit(db, r, "shelf_create", "shelf", shelf.ID, name, fmt.Sprintf(`{"list_id":%d}`, listID))
 		writeJSON(w, http.StatusCreated, shelf)
 	}
 }
@@ -562,6 +591,7 @@ func handleUpdateShelf(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		db.Create(&ShelfAudit{ShelfID: shelf.ID, Name: name, Action: "renamed"})
+		logAudit(db, r, "shelf_update", "shelf", shelf.ID, name, "")
 		writeJSON(w, http.StatusOK, shelf)
 	}
 }
@@ -619,6 +649,7 @@ func handleDeleteShelf(db *gorm.DB) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
+		logAudit(db, r, "shelf_delete", "shelf", shelf.ID, shelf.Name, "")
 		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	}
 }
@@ -662,6 +693,8 @@ func handleSetShelfCount(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to update shelf count")
 			return
 		}
+		logAudit(db, r, "set_count", "item_shelf", is.ID, fmt.Sprintf("itemShelf %d", is.ID),
+			fmt.Sprintf(`{"count":%d}`, *body.Count))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"id":    is.ID,
 			"count": *body.Count,
@@ -727,6 +760,9 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
+
+		logAudit(db, r, "move", "item", body.ItemID, fmt.Sprintf("item %d", body.ItemID),
+			fmt.Sprintf(`{"qty":%d,"from_shelf":%d,"to_shelf":%d}`, qty, body.SourceShelfID, body.TargetShelfID))
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"moved": qty,
@@ -795,6 +831,7 @@ func handleCreateList(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to create list")
 			return
 		}
+		logAudit(db, r, "list_create", "list", l.ID, name, "")
 		writeJSON(w, http.StatusCreated, l)
 	}
 }
@@ -834,6 +871,8 @@ func handleUpdateList(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to update list")
 			return
 		}
+		list.Name = name
+		logAudit(db, r, "list_update", "list", list.ID, name, "")
 		writeJSON(w, http.StatusOK, list)
 	}
 }
@@ -901,5 +940,39 @@ func handleDeleteList(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to delete list")
 			return
 		}
+		logAudit(db, r, "list_delete", "list", list.ID, list.Name, "")
+	}
+}
+
+// ── Notifications ─────────────────────────────────────────────────────
+
+func handleNotifications(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+				limit = n
+			}
+		}
+
+		var logs []AuditLog
+		tx := db.Order("created_at DESC").Limit(limit)
+
+		if since := r.URL.Query().Get("since"); since != "" {
+			if t, err := time.Parse(time.RFC3339, since); err == nil {
+				tx = tx.Where("created_at > ?", t)
+			}
+		}
+
+		if actions := r.URL.Query().Get("actions"); actions != "" {
+			parts := strings.Split(actions, ",")
+			for i, a := range parts {
+				parts[i] = strings.TrimSpace(a)
+			}
+			tx = tx.Where("action IN ?", parts)
+		}
+
+		tx.Find(&logs)
+		writeJSON(w, http.StatusOK, logs)
 	}
 }

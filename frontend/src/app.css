@@ -39,6 +39,68 @@
   padding: 0 0.3rem;
   margin-bottom: 0;
 }
+/* Notification bell */
+.notif-bell {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  position: relative;
+  padding: 0 0.3rem;
+  margin-bottom: 0;
+  line-height: 1;
+}
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -2px;
+  background: #e53935;
+  color: #fff;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* Notification modal list */
+.notif-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.notif-entry {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.notif-entry:last-child {
+  border-bottom: none;
+}
+.notif-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.notif-user {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.notif-time {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+.notif-detail {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+.notif-empty {
+  text-align: center;
+  color: var(--pico-muted-color);
+  padding: 1rem 0;
+}
 .list-select {
   font-size: 1.5rem;
   font-weight: bold;

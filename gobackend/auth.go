@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -345,6 +346,8 @@ func logoutHandler(db *gorm.DB) http.HandlerFunc {
 }
 
 // requireAuth is middleware that blocks unauthenticated requests.
+// On success, injects the user ID and name into the request context
+// so downstream handlers can log actions without re-querying the DB.
 func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := getSessionToken(r)
@@ -359,7 +362,22 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		// Load user name for audit logging
+		var user User
+		if err := db.First(&user, session.UserID).Error; err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), userContextKey, struct {
+			UserID uint
+			Name   string
+		}{
+			UserID: user.ID,
+			Name:   user.Name,
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

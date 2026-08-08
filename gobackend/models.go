@@ -46,6 +46,7 @@ type ItemShelf struct {
 // User represents an authenticated user of the app.
 type User struct {
 	ID           uint   `gorm:"primaryKey" json:"id"`
+	Name         string `gorm:"default:''" json:"name"`
 	Email        string `gorm:"not null;uniqueIndex" json:"email"`
 	PasswordHash string `gorm:"not null" json:"-"`
 	SessionToken string `gorm:"index" json:"-"` // deprecated — kept for migration; replaced by sessions table
@@ -79,4 +80,18 @@ type ShelfAudit struct {
 	ShelfID   uint      `gorm:"not null;index" json:"shelfId"`
 	Name      string    `gorm:"not null" json:"name"`
 	Action    string    `gorm:"not null" json:"action"` // "created", "renamed", "deleted"
+}
+
+// AuditLog records every mutation for the notification feed.
+// Who did what, to which entity, when.
+type AuditLog struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"not null;index" json:"user_id"`
+	UserName   string    `gorm:"not null" json:"user_name"`
+	Action     string    `gorm:"not null;index" json:"action"`
+	EntityType string    `gorm:"not null" json:"entity_type"`
+	EntityID   uint      `json:"entity_id"`
+	EntityName string    `json:"entity_name"`
+	Details    string    `json:"details"`
+	CreatedAt  time.Time `gorm:"not null;index" json:"created_at"`
 }

@@ -11,6 +11,9 @@ import ItemTable from "./components/ItemTable";
 import PromptModal from "./components/PromptModal";
 import ConfirmModal from "./components/ConfirmModal";
 import StatusMessage from "./components/StatusMessage";
+import NotificationsBell from "./components/NotificationsBell";
+import NotificationsModal from "./components/NotificationsModal";
+import type { AuditLog } from "./types";
 
 export default function App() {
   const onAuthRequired = () => setNeedsAuth(true);
@@ -35,6 +38,11 @@ export default function App() {
   const [newListOpen, setNewListOpen] = createSignal(false);
   const [deleteListId, setDeleteListId] = createSignal<number | null>(null);
 
+  // Notification state
+  const [notifOpen, setNotifOpen] = createSignal(false);
+  const [unreadCount, setUnreadCount] = createSignal(0);
+  const [notificationLogs, setNotificationLogs] = createSignal<AuditLog[]>([]);
+
   function openRename() {
     setRenameOpen(true);
   }
@@ -50,6 +58,31 @@ export default function App() {
     } catch (_) { flashStatus("Failed to delete list"); }
     setDeleteListId(null);
   }
+
+  // ── Notifications ──────────────────────────────────────────────────
+
+  async function fetchNotifications() {
+    if (!needsAuth()) {
+      try {
+        const lastRead = localStorage.getItem("notif_last_read") || new Date(0).toISOString();
+        const logs = await api.getNotifications(lastRead);
+        setNotificationLogs(logs);
+        setUnreadCount(logs.length);
+      } catch (_) { /* silent — notifications are non-critical */ }
+    }
+  }
+
+  async function openNotifications() {
+    await fetchNotifications();
+    setNotifOpen(true);
+  }
+
+  // Poll for new notifications every 60 seconds
+  onMount(() => {
+    const interval = setInterval(fetchNotifications, 60000);
+    fetchNotifications(); // initial fetch
+    onCleanup(() => clearInterval(interval));
+  });
 
   return (
     <main class="container app-container">
@@ -77,6 +110,7 @@ export default function App() {
               <h1 class="no-mb">{currentListName()}</h1>
             </Show>
             <button type="button" class="outline list-edit-btn" onClick={openRename} title="Rename list">✏️</button>
+            <NotificationsBell count={unreadCount()} onClick={openNotifications} />
             {currentListId() !== 1 && (
               <button type="button" class="outline list-edit-btn" onClick={() => setDeleteListId(currentListId())} title="Delete list">🗑️</button>
             )}
@@ -120,6 +154,17 @@ export default function App() {
             message={`Permanently delete "${lists().find(l => l.id === deleteListId())?.name}" and all its items? This cannot be undone.`}
             onConfirm={doDeleteList}
             onCancel={() => setDeleteListId(null)}
+          />
+        </Show>
+
+        <Show when={notifOpen()}>
+          <NotificationsModal
+            logs={notificationLogs()}
+            onClose={() => {
+              localStorage.setItem("notif_last_read", new Date().toISOString());
+              setUnreadCount(0);
+              setNotifOpen(false);
+            }}
           />
         </Show>
 

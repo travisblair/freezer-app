@@ -301,6 +301,9 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	mux.Handle("PATCH /api/item-shelf/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleSetShelfCount(db))))))
 	mux.Handle("POST /api/item-shelf/move", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleMoveItem(db))))))
 
+	// Notification endpoints
+	mux.Handle("GET /api/notifications", requireAuth(db, http.HandlerFunc(handleNotifications(db))))
+
 	// Serve static frontend build (SPA fallback).
 	// Scanner probes for .env, .git, wp-admin etc. get the tarpit.
 	frontendDist := findFrontendDist()

@@ -210,4 +210,14 @@ export const api = {
   deleteList(id: number): Promise<unknown> {
     return request(`/lists/${id}`, { method: "DELETE" });
   },
+
+  // ── Notifications ───────────────────────────────────────────────────
+
+  getNotifications(since?: string, limit = 50): Promise<import("./types").AuditLog[]> {
+    const params = new URLSearchParams();
+    if (since) params.set("since", since);
+    params.set("limit", String(limit));
+    params.set("actions", "create,delete,bulk_delete,hard_delete");
+    return request(`/notifications?${params.toString()}`) as Promise<import("./types").AuditLog[]>;
+  },
 };
