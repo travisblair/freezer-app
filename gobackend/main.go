@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -255,13 +257,13 @@ func trustedOrigin(origin string) bool {
 		strings.HasPrefix(origin, "http://127.0.0.1:") {
 		return true
 	}
-	// LAN access: match private IP prefixes with port separator to avoid
-	// prefix confusion (e.g. 192.168.1.evil.com).
-	if strings.HasPrefix(origin, "http://192.168.") {
-		rest := origin[len("http://192.168."):]
-		// Allow only numeric IP continuation
-		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-			return true
+	// LAN access: parse the origin as a URL and validate the host is a
+	// private IPv4 address.  This correctly rejects prefix-confusion
+	// attacks (e.g. http://192.168.1.evil.com) that string-prefix
+	// matching would accept.
+	if u, err := url.Parse(origin); err == nil && u.Scheme == "http" {
+		if ip := net.ParseIP(u.Hostname()); ip != nil && ip.To4() != nil {
+			return ip.IsPrivate()
 		}
 	}
 	// Tailscale Funnel — only allowed when TRUSTED_ORIGIN is explicitly set.

@@ -191,3 +191,50 @@ func TestCSVExportDoesNotDoubleEscape(t *testing.T) {
 		t.Fatalf("CSV must NOT contain triple-quotes (double-escaping bug). Got:\n%s", csv)
 	}
 }
+
+// ── Unit: trustedOrigin CORS validation ──────────────────────────────────
+
+func TestTrustedOrigin(t *testing.T) {
+	tests := []struct {
+		origin   string
+		expected bool
+	}{
+		// Valid LAN origins
+		{"http://192.168.1.1", true},
+		{"http://192.168.1.50", true},
+		{"http://192.168.1.1:3000", true},
+		{"http://192.168.255.254", true},
+		{"http://10.0.0.1", true},
+		{"http://10.0.0.5:8080", true},
+		{"http://172.16.0.1", true},
+		{"http://172.31.255.254", true},
+
+		// Local dev
+		{"http://localhost", true},
+		{"http://localhost:3000", true},
+		{"http://127.0.0.1", true},
+		{"http://127.0.0.1:3000", true},
+
+		// Prefix confusion attacks — must be rejected
+		{"http://192.168.1.evil.com", false},
+		{"http://192.168.1.1.evil.com", false},
+		{"http://192.168.foo.com", false},
+
+		// HTTPS should not be trusted for LAN
+		{"https://192.168.1.1", false},
+
+		// Non-private IPs
+		{"http://8.8.8.8", false},
+		{"http://203.0.113.5", false},
+
+		// Garbage
+		{"", false},
+		{"not-a-url", false},
+	}
+
+	for _, tt := range tests {
+		if got := trustedOrigin(tt.origin); got != tt.expected {
+			t.Errorf("trustedOrigin(%q) = %v, want %v", tt.origin, got, tt.expected)
+		}
+	}
+}

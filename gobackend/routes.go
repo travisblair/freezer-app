@@ -152,6 +152,11 @@ var scannerProbes = map[string]bool{
 // Callers should check scannerProbes before invoking — this does not
 // re-check.
 func serveTarpit(w http.ResponseWriter, r *http.Request) {
+	// Override the server's global WriteTimeout (30s) — the tarpit
+	// needs its full 10-minute run.  SetWriteDeadline with a zero
+	// Time removes the deadline for this response only.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	// Claim a slot.  If none available, return without writing anything —
 	// the scanner's connection hangs until their timeout fires.
 	select {
