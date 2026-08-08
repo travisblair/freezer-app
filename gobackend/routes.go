@@ -346,6 +346,13 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 			// r.URL.Path as absolute and drop frontendDist.
 			relPath := strings.TrimPrefix(r.URL.Path, "/")
 			path := filepath.Join(frontendDist, relPath)
+
+			// Never cache index.html — forces iOS PWA to re-fetch
+			// and discover new hashed JS/CSS assets on every load.
+			if r.URL.Path == "/" || relPath == "index.html" {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+
 			if _, err := os.Stat(path); os.IsNotExist(err) && !strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, filepath.Join(frontendDist, "index.html"))
