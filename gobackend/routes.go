@@ -16,8 +16,8 @@ import (
 // ── Global rate limiter ─────────────────────────────────────────────────
 //
 // Simple token-bucket per-IP rate limiter applied to all authenticated
-// mutating endpoints.  Read endpoints and the auth endpoint have their
-// own (higher) limits.
+// mutating endpoints.  Read endpoints are not rate-limited (auth-gated
+// only).  Auth endpoint has its own progressive-delay tarpit instead.
 
 const (
 	rateLimitPerSecond = 5
@@ -207,7 +207,15 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 		)
 		w.Write([]byte(payload))
 		flusher.Flush()
-		time.Sleep(1 * time.Second)
+		// Sleep for 1s, but abort immediately if client disconnects or server shuts down
+		select {
+		case <-r.Context().Done():
+			elapsed := time.Since(start).Round(time.Second)
+			GetLogger().Info("🪤 TARPIT BAILED | %s | %d chunks | %v",
+				r.URL.Path, chunk, elapsed)
+			return
+		case <-time.After(1 * time.Second):
+		}
 	}
 	// Graceful close — scanner thinks the transfer completed
 	fmt.Fprintf(w, `{"status":"ok","complete":true}`+"\n")

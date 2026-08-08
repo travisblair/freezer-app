@@ -240,6 +240,9 @@ func authHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Cap request body: auth payloads (email + password) shouldn't exceed 64 KB
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+
 		ip := clientIP(r)
 		if !authShouldDelay(ip) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
@@ -384,19 +387,18 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 // Requires Content-Type: application/json for POST/PUT/PATCH/DELETE requests.
 // Simple forms cannot set this header across origins without a CORS preflight,
 // providing effective CSRF defense when combined with SameSite=Strict cookies.
-// Also limits request body to 1 MB to prevent resource exhaustion on the Pi.
+// Request body size is capped separately by requestSizeLimitMiddleware in main.go.
 func csrfProtect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
 			r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			ct := r.Header.Get("Content-Type")
-			if ct != "application/json" {
+			if ct != "" && !strings.HasPrefix(ct, "application/json") {
 				writeJSON(w, http.StatusBadRequest, map[string]string{
 					"error": "Content-Type must be application/json",
 				})
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -52,7 +52,7 @@ func handleListItems(db *gorm.DB) http.HandlerFunc {
 		tx := db.Preload("Barcodes").Preload("Shelves").Order("name ASC")
 
 		if search != "" {
-			tx = tx.Where("name LIKE ?", "%"+escapeLike(search)+"%")
+			tx = tx.Where("name LIKE ? ESCAPE '\\'", "%"+escapeLike(search)+"%")
 		}
 
 		var items []Item
@@ -93,7 +93,7 @@ func handleSearchItems(db *gorm.DB) http.HandlerFunc {
 		}
 		var items []Item
 		db.Preload("Barcodes").Preload("Shelves").
-			Where("name LIKE ?", "%"+escapeLike(q)+"%").
+			Where("name LIKE ? ESCAPE '\\'", "%"+escapeLike(q)+"%").
 			Order("name ASC").
 			Limit(10).
 			Find(&items)
@@ -155,13 +155,16 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			targetShelfID = item.Shelves[0].ShelfID
 		}
 
-		// Validate the target shelf exists
-		if targetShelfID > 0 {
-			var targetShelf Shelf
-			if err := db.First(&targetShelf, targetShelfID).Error; err != nil {
-				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
-				return
-			}
+		// Validate the target shelf exists.  If no shelf is provided and the
+		// item has no existing shelves, require an explicit shelf from the caller.
+		if targetShelfID == 0 {
+			errorJSON(w, http.StatusBadRequest, "shelf is required")
+			return
+		}
+		var targetShelf Shelf
+		if err := db.First(&targetShelf, targetShelfID).Error; err != nil {
+			errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+			return
 		}
 
 		// Find or create the ItemShelf row, then atomically update count — all
@@ -263,7 +266,8 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 			}
 		}
 
-		// Default to Shelf 1 if no shelf specified
+		// Default to Shelf 1 if no shelf specified (frontend always sends shelfId now,
+		// but the API default remains for backward compatibility with direct API users).
 		shelfID := body.ShelfID
 		if shelfID == 0 {
 			shelfID = 1
@@ -754,6 +758,15 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 
 		var qty int
 		err := db.Transaction(func(tx *gorm.DB) error {
+			// Validate source and target shelves exist
+			var src, tgt Shelf
+			if err := tx.First(&src, body.SourceShelfID).Error; err != nil {
+				return fmt.Errorf("source shelf not found")
+			}
+			if err := tx.First(&tgt, body.TargetShelfID).Error; err != nil {
+				return fmt.Errorf("target shelf not found")
+			}
+
 			var source ItemShelf
 			if err := tx.Where("item_id = ? AND shelf_id = ?", body.ItemID, body.SourceShelfID).First(&source).Error; err != nil {
 				return err

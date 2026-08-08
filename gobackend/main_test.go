@@ -141,7 +141,7 @@ func TestAuthAcceptsValidSession(t *testing.T) {
 	defer ts.Close()
 
 	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Chicken Breast", "barcode": "12345", "quantity": 3,
+		"name": "Chicken Breast", "barcode": "12345", "quantity": 3, "shelfId": 1,
 	}, true)
 	if resp.StatusCode != 201 {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
@@ -160,7 +160,7 @@ func TestCreateWithoutBarcode(t *testing.T) {
 	defer ts.Close()
 
 	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Frozen Peas", "quantity": 5,
+		"name": "Frozen Peas", "quantity": 5, "shelfId": 1,
 	}, true)
 	if resp.StatusCode != 201 {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
@@ -184,11 +184,11 @@ func TestCreateDuplicateBarcodeReturns409(t *testing.T) {
 	defer ts.Close()
 
 	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "First", "barcode": "DUP-001", "quantity": 1,
+		"name": "First", "barcode": "DUP-001", "quantity": 1, "shelfId": 1,
 	}, true)
 
 	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Second", "barcode": "DUP-001", "quantity": 1,
+		"name": "Second", "barcode": "DUP-001", "quantity": 1, "shelfId": 1,
 	}, true)
 	if resp.StatusCode != 409 {
 		t.Fatalf("expected 409, got %d", resp.StatusCode)
@@ -202,7 +202,7 @@ func TestLinkBarcode(t *testing.T) {
 	defer ts.Close()
 
 	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Chicken Breast", "quantity": 3,
+		"name": "Chicken Breast", "quantity": 3, "shelfId": 1,
 	}, true)
 	var item Item
 	decodeJSON(t, resp, &item)
@@ -225,13 +225,13 @@ func TestLinkDuplicateBarcodeRejects(t *testing.T) {
 	defer ts.Close()
 
 	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Item A", "barcode": "SHARED", "quantity": 1,
+		"name": "Item A", "barcode": "SHARED", "quantity": 1, "shelfId": 1,
 	}, true)
 	var itemA Item
 	decodeJSON(t, resp, &itemA)
 
 	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Item B", "quantity": 1,
+		"name": "Item B", "quantity": 1, "shelfId": 1,
 	}, true)
 	var itemB Item
 	decodeJSON(t, resp, &itemB)
@@ -251,7 +251,7 @@ func TestLookupByBarcode(t *testing.T) {
 	defer ts.Close()
 
 	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Chicken Breast", "barcode": "LOOK-001", "quantity": 3,
+		"name": "Chicken Breast", "barcode": "LOOK-001", "quantity": 3, "shelfId": 1,
 	}, true)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/api/item/LOOK-001", nil)
@@ -294,7 +294,7 @@ func TestScanIncrements(t *testing.T) {
 	defer ts.Close()
 
 	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Chicken", "barcode": "SCAN-001", "quantity": 3,
+		"name": "Chicken", "barcode": "SCAN-001", "quantity": 3, "shelfId": 1,
 	}, true)
 
 	resp := doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
@@ -318,7 +318,7 @@ func TestScanDecrements(t *testing.T) {
 	defer ts.Close()
 
 	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Fish", "barcode": "SCAN-002", "quantity": 5,
+		"name": "Fish", "barcode": "SCAN-002", "quantity": 5, "shelfId": 1,
 	}, true)
 
 	resp := doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
@@ -339,7 +339,7 @@ func TestScanClampsToZeroAndSoftDeletes(t *testing.T) {
 	defer ts.Close()
 
 	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
-		"name": "Overflow", "barcode": "SCAN-003", "quantity": 2,
+		"name": "Overflow", "barcode": "SCAN-003", "quantity": 2, "shelfId": 1,
 	}, true)
 
 	resp := doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
