@@ -91,9 +91,17 @@ func newAppLogger() *AppLogger {
 
 	al.Info("Logger initialized (level=%s, file=%s)", levelNames[al.level], logFile)
 
-	// Start periodic log rotation check
+	// Start periodic log rotation check (wrapped with panic recovery,
+	// consistent with all other goroutines in main.go).
 	al.done = make(chan struct{})
-	go al.rotateCheck()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("ERROR: Log rotate goroutine panicked: %v", r)
+			}
+		}()
+		al.rotateCheck()
+	}()
 
 	return al
 }

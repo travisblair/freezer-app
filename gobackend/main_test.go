@@ -334,7 +334,7 @@ func TestScanDecrements(t *testing.T) {
 	}
 }
 
-func TestScanClampsToZeroAndSoftDeletes(t *testing.T) {
+func TestScanClampsToZeroAndDeletesRow(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -348,10 +348,12 @@ func TestScanClampsToZeroAndSoftDeletes(t *testing.T) {
 	var result map[string]interface{}
 	decodeJSON(t, resp, &result)
 	item := result["item"].(map[string]interface{})
-	shelves := item["shelves"].([]interface{})
-	s := shelves[0].(map[string]interface{})
-	if int(s["count"].(float64)) != 0 {
-		t.Fatalf("expected shelf count clamped to 0, got %v", s["count"])
+	// When count hits 0, the ItemShelf row is deleted (consistent with
+	// handleSetShelfCount and handleMoveItem). omitempty means the key
+	// may be absent entirely.
+	shelves, _ := item["shelves"].([]interface{})
+	if len(shelves) != 0 {
+		t.Fatalf("expected shelves empty after decrement to zero, got %d shelves", len(shelves))
 	}
 }
 

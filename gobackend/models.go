@@ -79,6 +79,7 @@ type ShelfAudit struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time `json:"createdAt"`
 	ShelfID   uint      `gorm:"not null;index" json:"shelfId"`
+	ListID    *uint     `gorm:"index" json:"listId"`
 	Name      string    `gorm:"not null" json:"name"`
 	Action    string    `gorm:"not null" json:"action"` // "created", "renamed", "deleted"
 }
