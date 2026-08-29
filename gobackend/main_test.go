@@ -550,7 +550,10 @@ func TestExportCSV(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", ts.URL+"/api/export", nil)
 	req.AddCookie(authCookie())
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("export request failed: %v", err)
+	}
 	defer resp.Body.Close()
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(resp.Body)
@@ -704,7 +707,10 @@ func TestAuthCheckUnauthenticated(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	resp, _ := http.Get(ts.URL + "/api/auth/check")
+	resp, err := http.Get(ts.URL + "/api/auth/check")
+	if err != nil {
+		t.Fatalf("auth check request failed: %v", err)
+	}
 	defer resp.Body.Close()
 	var result map[string]bool
 	decodeJSON(t, resp, &result)

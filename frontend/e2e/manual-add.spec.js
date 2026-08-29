@@ -89,7 +89,8 @@ test.describe("Manual Add Form", () => {
     await page.locator(".duplicate-offer").getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByText(/already exists/)).not.toBeVisible();
 
-    expect(page.getByText("Chicken Breast").first()).toBeVisible();
+    // Table must still render the item list after dismissing the offer.
+    await expect(page.getByText("Chicken Breast").first()).toBeVisible();
   });
 
   test("clears form after successful add", async ({ page }) => {

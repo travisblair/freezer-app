@@ -354,6 +354,14 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
+// Unwrap exposes the underlying ResponseWriter so http.ResponseController
+// can reach it. The tarpit's SetWriteDeadline depends on this — without
+// Unwrap, the deadline silently no-ops and tarpit responses die at the
+// global WriteTimeout instead of running their full duration.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // ── Request logging middleware ──────────────────────────────────────────
 
 // requestLoggingMiddleware logs every HTTP request: method, path, status, duration, remote addr.

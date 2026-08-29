@@ -306,6 +306,7 @@ export default function ItemTable() {
           lists={lists}
           onDone={() => {
             setMoveState(null);
+            clearSelection();
             loadItems();
           }}
           onCancel={() => setMoveState(null)}
