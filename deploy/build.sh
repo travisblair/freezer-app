@@ -13,10 +13,12 @@ RELEASE_FILE="$SCRIPT_DIR/release.tar.gz"
 
 echo "==> Building Go backend for Pi Zero W (linux/arm/ARMv6)..."
 cd "$PROJECT_DIR/gobackend"
-GOOS=linux GOARCH=arm GOARM=6 go build -o freezer-server .
+# Output to freezer-server-arm so the host's native freezer-server is
+# never clobbered by a cross-compiled binary.
+GOOS=linux GOARCH=arm GOARM=6 go build -o freezer-server-arm .
 
 # Verify the binary architecture
-echo "    Binary type: $(file freezer-server | cut -d: -f2-)"
+echo "    Binary type: $(file freezer-server-arm | cut -d: -f2-)"
 
 echo ""
 echo "==> Building frontend (SolidJS + Vite)..."
@@ -27,7 +29,7 @@ echo ""
 echo "==> Packaging release tarball..."
 cd "$PROJECT_DIR"
 tar -czf "$RELEASE_FILE" \
-  gobackend/freezer-server \
+  gobackend/freezer-server-arm \
   frontend/dist \
   prod-start.sh \
   .env.example \

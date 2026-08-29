@@ -23,8 +23,10 @@ echo "==> Installing on Pi..."
 ssh -t "$PI_ADDR" "
   set -e
   cd ~/freezer-app
+  rm -rf frontend/dist
   tar -xzf ~/release.tar.gz
   rm ~/release.tar.gz
+  mv gobackend/freezer-server-arm gobackend/freezer-server
   chmod +x gobackend/freezer-server prod-start.sh
   sudo /bin/cp /home/admin/freezer-app/deploy/freezer-app.service /etc/systemd/system/
   sudo systemctl daemon-reload
