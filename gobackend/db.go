@@ -101,8 +101,16 @@ func OpenDB() *gorm.DB {
 
 	// ── Seed default list ────────────────────────────────────────────────
 	// Use ID: 1 to ensure the default Freezer list always occupies id 1.
-	if err := db.FirstOrCreate(&List{}, List{ID: DefaultListID, Name: "Freezer"}).Error; err != nil {
-		GetLogger().Fatal("failed to seed default list: %v", err)
+	// Identity-based, NOT name-based: the old FirstOrCreate condition
+	// (ID=1 AND name='Freezer') missed forever once the user renamed the
+	// list, silently re-attempting a doomed INSERT on every boot (the
+	// UNIQUE error was swallowed by the unchecked result until Aug 2026).
+	if err := db.First(&List{}, DefaultListID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := db.Create(&List{ID: DefaultListID, Name: "Freezer"}).Error; err != nil {
+			GetLogger().Fatal("failed to seed default list: %v", err)
+		}
+	} else if err != nil {
+		GetLogger().Fatal("default list lookup failed: %v", err)
 	}
 
 	// ── Data migration: existing items → Shelf 1 ──────────────────────────

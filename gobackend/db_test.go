@@ -178,3 +178,33 @@ func TestShelfSeedIsIdentityBased(t *testing.T) {
 		t.Fatalf("anchor shelf changed across boot: %+v", shelves[0])
 	}
 }
+
+// TestListSeedIsIdentityBased guards the renamed-list boot crash: the old
+// FirstOrCreate condition (ID=1 AND name='Freezer') missed the renamed
+// default list and re-attempted a doomed INSERT every boot — fatal once the
+// error was checked. The seed must find by ID and preserve a renamed name.
+func TestListSeedIsIdentityBased(t *testing.T) {
+	tmp := t.TempDir()
+	prev := os.Getenv("DB_PATH")
+	os.Setenv("DB_PATH", filepath.Join(tmp, "freezer.db"))
+	defer os.Setenv("DB_PATH", prev)
+
+	db := OpenDB()
+	if err := db.Model(&List{}).Where("id = ?", DefaultListID).Update("name", "Custom Name").Error; err != nil {
+		t.Fatalf("rename list: %v", err)
+	}
+	sqlDB, _ := db.DB()
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	// Second boot must succeed (no UNIQUE re-insert) and keep the name.
+	db2 := OpenDB()
+	var l List
+	if err := db2.First(&l, DefaultListID).Error; err != nil {
+		t.Fatalf("default list missing after boot: %v", err)
+	}
+	if l.Name != "Custom Name" {
+		t.Fatalf("renamed list clobbered by seed: %q", l.Name)
+	}
+}
