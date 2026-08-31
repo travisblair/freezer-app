@@ -8,6 +8,7 @@ import {
   itemsVersion,
   currentListId,
   setLists,
+  flashStatus,
 } from "../store";
 import { SEARCH_DEBOUNCE_MS } from "../constants";
 
@@ -81,7 +82,10 @@ export function useItemSearch(): ItemSearchControls {
       ]);
       setItems(itemData);
     } catch (err) {
+      // A 500 here used to leave a stale/empty table with zero feedback
+      // (the offline banner only catches network rejections). Surface it.
       if (import.meta.env.DEV) console.error("Failed to load items", err);
+      flashStatus("Failed to load items");
     }
     setLoading(false);
   }

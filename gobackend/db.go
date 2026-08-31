@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,20 +33,26 @@ func OpenDB() *gorm.DB {
 		GetLogger().Fatal("cannot create data directory %s: %v", dir, err)
 	}
 
-	// DSN pragmas tuned for Raspberry Pi Zero W (slow SD card, single-core):
-	//   _journal_mode=WAL      - Write-Ahead Logging for concurrent reads during writes
-	//   _busy_timeout=5000     - Wait up to 5s when DB is locked (instead of failing)
-	//   _synchronous=FULL      - Full durability; safe against power loss
-	//   _foreign_keys=on       - Enforce FK constraints
-	//   _cache_size=-8000      - ~8MB page cache (negative = KiB)
-	//   _wal_autocheckpoint=1000 - Checkpoint WAL every 1000 pages to prevent bloat
+	// DSN pragmas tuned for Raspberry Pi Zero W (slow SD card, single-core).
+	// CRITICAL: glebarez/sqlite (modernc) only honors the `_pragma=` query
+	// parameter. mattn-style params (`_journal_mode=WAL`, `_busy_timeout`,
+	// `_foreign_keys`) are silently DISCARDED by the driver — the app ran
+	// journal_mode=delete, busy_timeout=0, foreign_keys=OFF for months
+	// before this was caught (Aug 2026 audit). The values are verified
+	// after connect below so a future regression is loud, not silent.
+	//   journal_mode=WAL     - write-ahead logging for concurrent reads
+	//   busy_timeout=5000    - wait up to 5s on lock contention
+	//   synchronous=FULL     - full durability against power loss
+	//   foreign_keys=1       - enforce FK constraints (orphan-row defense)
+	//   cache_size=-8000     - ~8MB page cache (negative = KiB)
+	//   wal_autocheckpoint=1000 - checkpoint WAL every 1000 pages
 	dsn := dbPath +
-		"?_journal_mode=WAL" +
-		"&_busy_timeout=5000" +
-		"&_synchronous=FULL" +
-		"&_foreign_keys=on" +
-		"&_cache_size=-8000" +
-		"&_wal_autocheckpoint=1000"
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(FULL)" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=cache_size(-8000)" +
+		"&_pragma=wal_autocheckpoint(1000)"
 
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -64,6 +71,28 @@ func OpenDB() *gorm.DB {
 	sqlDB.SetMaxIdleConns(1)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
+	// Verify the critical pragmas actually applied. With the _pragma=
+	// syntax a failure is loud at connect time, but verify anyway and
+	// warn — the Aug 2026 incident taught us that guards must actually
+	// guard. journal_mode persists in the DB file, busy_timeout and
+	// foreign_keys are per-connection.
+	var journalMode string
+	var busyTimeout int
+	var foreignKeys int
+	if err := db.Raw("PRAGMA journal_mode").Scan(&journalMode).Error; err == nil {
+		if journalMode != "wal" {
+			GetLogger().Warn("journal_mode is %q, expected wal — DSN pragma not applied", journalMode)
+		}
+	}
+	db.Raw("PRAGMA busy_timeout").Scan(&busyTimeout)
+	if busyTimeout != 5000 {
+		GetLogger().Warn("busy_timeout is %d, expected 5000 — DSN pragma not applied", busyTimeout)
+	}
+	db.Raw("PRAGMA foreign_keys").Scan(&foreignKeys)
+	if foreignKeys != 1 {
+		GetLogger().Warn("foreign_keys is %d, expected 1 — DSN pragma not applied", foreignKeys)
+	}
+
 	// Auto-migrate models. GORM creates tables if they don't exist
 	// and adds missing columns. Existing data is never dropped.
 	if err := db.AutoMigrate(&Item{}, &ItemBarcode{}, &Shelf{}, &ItemShelf{}, &User{}, &List{}, &ShelfAudit{}, &Session{}, &AuditLog{}); err != nil {
@@ -72,14 +101,24 @@ func OpenDB() *gorm.DB {
 
 	// ── Seed default list ────────────────────────────────────────────────
 	// Use ID: 1 to ensure the default Freezer list always occupies id 1.
-	db.FirstOrCreate(&List{}, List{ID: DefaultListID, Name: "Freezer"})
+	if err := db.FirstOrCreate(&List{}, List{ID: DefaultListID, Name: "Freezer"}).Error; err != nil {
+		GetLogger().Fatal("failed to seed default list: %v", err)
+	}
 
 	// ── Data migration: existing items → Shelf 1 ──────────────────────────
-	// Ensure "Shelf 1" exists (default shelf, scoped to list 1 = Freezer)
+	// Resolve the anchor shelf by IDENTITY (the shelf at DefaultShelfID),
+	// NOT by name. The old name-keyed seed let a rename of "Shelf 1" cause
+	// a phantom "Shelf 1" to be re-created on every boot — the same
+	// wrong-guard class as the legacy-count migration (Aug 2026 audit).
 	var shelf1 Shelf
-	if err := db.Where("name = ? AND list_id = ?", "Shelf 1", 1).First(&shelf1).Error; err != nil {
-		shelf1 = Shelf{Name: "Shelf 1", ListID: 1}
-		db.Create(&shelf1)
+	seedErr := db.First(&shelf1, DefaultShelfID).Error
+	if errors.Is(seedErr, gorm.ErrRecordNotFound) {
+		shelf1 = Shelf{ID: DefaultShelfID, Name: "Shelf 1", ListID: DefaultListID}
+		if err := db.Create(&shelf1).Error; err != nil {
+			GetLogger().Fatal("failed to seed default shelf: %v", err)
+		}
+	} else if seedErr != nil {
+		GetLogger().Fatal("default shelf lookup failed: %v", seedErr)
 	}
 
 	// One-time: move existing item counts from the legacy `items.count`
@@ -96,21 +135,31 @@ func OpenDB() *gorm.DB {
 	// on alone: rows are deleted at count 0, so an out-of-stock item is
 	// always "missing a row" by design.
 	var hasLegacyCount bool
-	db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasLegacyCount)
+	if err := db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasLegacyCount).Error; err != nil {
+		GetLogger().Error("legacy count column check failed: %v", err)
+		hasLegacyCount = false
+	}
 	if hasLegacyCount {
-		if err := db.Exec(`
-			INSERT INTO item_shelves (item_id, shelf_id, count)
-			SELECT id, ?, count FROM items
-			WHERE count > 0 AND deleted = 0 AND id NOT IN (
-				SELECT item_id FROM item_shelves
-			)
-		`, shelf1.ID).Error; err != nil {
-			GetLogger().Error("legacy count migration failed: %v", err)
-		}
-		// Consume the legacy counts so later boots can never re-materialize
-		// them. From here on, item_shelves is the only source of truth.
-		if err := db.Exec(`UPDATE items SET count = 0 WHERE count > 0`).Error; err != nil {
-			GetLogger().Error("legacy count consumption failed: %v", err)
+		// INSERT and consumption run in ONE transaction: if the INSERT
+		// fails (locked DB, SD error at boot), the legacy counts must
+		// survive so the next boot can retry. Zeroing them after a failed
+		// INSERT would permanently destroy unmigrated inventory.
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec(`
+				INSERT INTO item_shelves (item_id, shelf_id, count)
+				SELECT id, ?, count FROM items
+				WHERE count > 0 AND deleted = 0 AND id NOT IN (
+					SELECT item_id FROM item_shelves
+				)
+			`, shelf1.ID).Error; err != nil {
+				return err
+			}
+			// Consume the legacy counts so later boots can never
+			// re-materialize them. From here on, item_shelves is the only
+			// source of truth.
+			return tx.Exec(`UPDATE items SET count = 0 WHERE count > 0`).Error
+		}); err != nil {
+			GetLogger().Error("legacy count migration failed (counts preserved for retry): %v", err)
 		}
 	}
 

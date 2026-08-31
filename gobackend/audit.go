@@ -24,7 +24,11 @@ func auditDetails(args map[string]any) string {
 func logAudit(db *gorm.DB, r *http.Request, action, entityType string, entityID uint, entityName, details string) {
 	userID, userName := userFromContext(r)
 	if userID == 0 {
-		return // shouldn't happen behind requireAuth
+		// Shouldn't happen behind requireAuth — but a silent return turns
+		// every mutation into an un-audited one if the auth context ever
+		// fails to populate. Log it loudly instead.
+		GetLogger().Error("audit skipped: no user in context for action %q (auth middleware failure?)", action)
+		return
 	}
 
 	entry := AuditLog{

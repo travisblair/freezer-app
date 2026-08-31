@@ -14,6 +14,14 @@ import (
 
 // ── Lookup by barcode ─────────────────────────────────────────────────
 
+// Sentinel errors for cross-handler classification (pitfall #17 — never
+// classify by string-matching error text).
+var (
+	ErrInsufficientCount      = errors.New("insufficient count")
+	ErrShelfNotFound          = errors.New("shelf not found")
+	ErrConcurrentModification = errors.New("concurrent modification")
+)
+
 // handleLookupBarcode responds with { found: true/false, item? }.
 // Preloads shelves so the frontend can show per-shelf counts.
 func handleLookupBarcode(db *gorm.DB) http.HandlerFunc {
@@ -28,7 +36,14 @@ func handleLookupBarcode(db *gorm.DB) http.HandlerFunc {
 			First(&item).Error
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"found": false})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"found": false})
+			} else {
+				// A DB failure must not masquerade as "barcode not found" —
+				// the frontend would offer to CREATE a duplicate item.
+				GetLogger().Error("barcode lookup failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -57,7 +72,11 @@ func handleListItems(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var items []Item
-		tx.Find(&items)
+		if err := tx.Find(&items).Error; err != nil {
+			GetLogger().Error("listItems query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 
 		// Filter out-of-stock items unless explicitly requested.
 		// Out-of-stock = sum of all ItemShelf counts = 0.
@@ -93,11 +112,15 @@ func handleSearchItems(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		var items []Item
-		db.Preload("Barcodes").Preload("Shelves").
+		if err := db.Preload("Barcodes").Preload("Shelves").
 			Where("name LIKE ? ESCAPE '\\'", "%"+escapeLike(q)+"%").
 			Order("name ASC").
 			Limit(10).
-			Find(&items)
+			Find(&items).Error; err != nil {
+			GetLogger().Error("searchItems query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 		writeJSON(w, http.StatusOK, items)
 	}
 }
@@ -140,10 +163,17 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			First(&item).Error
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"action":  "create",
-				"barcode": barcode,
-			})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{
+					"action":  "create",
+					"barcode": barcode,
+				})
+			} else {
+				// A DB failure must not masquerade as "barcode unknown" —
+				// the frontend would offer to CREATE a duplicate item.
+				GetLogger().Error("scan barcode lookup failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
 			return
 		}
 
@@ -164,7 +194,12 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		}
 		var targetShelf Shelf
 		if err := db.First(&targetShelf, targetShelfID).Error; err != nil {
-			errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+			} else {
+				GetLogger().Error("scan target shelf lookup failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -180,12 +215,22 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		if err := db.Transaction(func(tx *gorm.DB) error {
 			firstErr := tx.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error
 			if errors.Is(firstErr, gorm.ErrRecordNotFound) {
+				if body.Mode == "decrement" {
+					// Decrementing a row that doesn't exist = nothing to
+					// decrement. Reject instead of silently succeeding.
+					return fmt.Errorf("%w: requested %d, available 0", ErrInsufficientCount, body.Quantity)
+				}
 				itemShelf = ItemShelf{ItemID: item.ID, ShelfID: targetShelfID, Count: 0}
 				if err := tx.Create(&itemShelf).Error; err != nil {
 					return err
 				}
 			} else if firstErr != nil {
 				return firstErr
+			}
+			if body.Mode == "decrement" && itemShelf.Count < body.Quantity {
+				// Mirror moveItem's 409 semantics: over-decrementing is a
+				// client error (double-scan), not a silent clamp to zero.
+				return fmt.Errorf("%w: requested %d, available %d", ErrInsufficientCount, body.Quantity, itemShelf.Count)
 			}
 			// Atomic update on the ItemShelf row
 			if err := tx.Model(&itemShelf).Update("count",
@@ -202,10 +247,21 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			}
 			return nil
 		}); err != nil {
+			if errors.Is(err, ErrInsufficientCount) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
 			GetLogger().Error("scan transaction failed: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan update failed"})
 			return
 		}
+
+		// Audit BEFORE the post-commit reload: if the reload fails, the
+		// mutation has already committed and must still be audited (and the
+		// client retry won't double-log because the retry will 409 or scan
+		// again visibly). targetShelf.Name is already loaded — no N+1 query.
+		logAudit(db, r, "scan", "item", item.ID, item.Name,
+			auditDetails(map[string]any{"shelf": targetShelf.Name, "mode": body.Mode, "quantity": body.Quantity}))
 
 		// Reload item with updated shelves
 		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID).Error; err != nil {
@@ -213,21 +269,6 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
-
-		// Get shelf name for audit log
-		var shelfName string
-		for _, s := range item.Shelves {
-			if s.ShelfID == targetShelfID {
-				var shelf Shelf
-				if err := db.First(&shelf, s.ShelfID).Error; err == nil {
-					shelfName = shelf.Name
-				}
-				break
-			}
-		}
-
-		logAudit(db, r, "scan", "item", item.ID, item.Name,
-			auditDetails(map[string]any{"shelf": shelfName, "mode": body.Mode, "quantity": body.Quantity}))
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"action": "updated",
@@ -262,6 +303,14 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 		}
 
 		bc := strings.TrimSpace(body.Barcode)
+		if bc != "" {
+			// Scan/link validate barcodes — create must too, or arbitrary
+			// garbage lands in the unique index and the family UI.
+			if _, ok := validBarcode(bc); !ok {
+				errorJSON(w, http.StatusBadRequest, "barcode must be 1–255 chars")
+				return
+			}
+		}
 
 		// Duplicate barcode check
 		if bc != "" {
@@ -278,6 +327,12 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 					"item":  parent,
 				})
 				return
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				// A DB failure in the dup-check must not silently skip the
+				// duplicate detection and proceed to create.
+				GetLogger().Error("create dup-check failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+				return
 			}
 		}
 
@@ -291,7 +346,12 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 		// Validate shelf exists
 		var shelf Shelf
 		if err := db.First(&shelf, shelfID).Error; err != nil {
-			errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+			} else {
+				GetLogger().Error("create shelf lookup failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -319,7 +379,7 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 		})
 		if err != nil {
 			GetLogger().Error("handleCreate transaction failed: %v", err)
-			if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "unique") {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
 				errorJSON(w, http.StatusConflict, "barcode already exists")
 				return
 			}
@@ -355,7 +415,12 @@ func handleLinkBarcode(db *gorm.DB) http.HandlerFunc {
 
 		var item Item
 		if err := db.First(&item, body.ItemID).Error; err != nil {
-			errorJSON(w, http.StatusNotFound, "item not found")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not found")
+			} else {
+				GetLogger().Error("linkBarcode item lookup failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -363,11 +428,15 @@ func handleLinkBarcode(db *gorm.DB) http.HandlerFunc {
 		if err := db.Where("barcode = ?", barcode).First(&dup).Error; err == nil {
 			errorJSON(w, http.StatusConflict, "Barcode already linked to another item")
 			return
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			GetLogger().Error("linkBarcode dup-check failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
 		}
 
 		result := db.Create(&ItemBarcode{ItemID: item.ID, Barcode: barcode})
 		if result.Error != nil {
-			if strings.Contains(result.Error.Error(), "UNIQUE") || strings.Contains(result.Error.Error(), "unique") {
+			if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
 				errorJSON(w, http.StatusConflict, "Barcode already linked to another item")
 				return
 			}
@@ -399,7 +468,12 @@ func handleUpdateItem(db *gorm.DB) http.HandlerFunc {
 
 		var item Item
 		if err := db.First(&item, id).Error; err != nil {
-			errorJSON(w, http.StatusNotFound, "item not found")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not found")
+			} else {
+				GetLogger().Error("updateItem lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -456,11 +530,22 @@ func handleBulkDelete(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusBadRequest, "too many ids — maximum 500 per bulk delete")
 			return
 		}
-		result := db.Model(&ItemShelf{}).
-			Where("item_id IN ?", body.IDs).
-			Update("count", 0)
-		if result.Error != nil {
-			GetLogger().Error("bulkDelete update failed: %v", result.Error)
+		var deleted int64
+		err := db.Transaction(func(tx *gorm.DB) error {
+			result := tx.Model(&ItemShelf{}).
+				Where("item_id IN ?", body.IDs).
+				Update("count", 0)
+			if result.Error != nil {
+				return result.Error
+			}
+			deleted = result.RowsAffected
+			// Consistent with scan/setCount/moveItem: zero-count rows are
+			// DELETED, not left as ghosts that resurface as phantom zero-count
+			// shelf entries (the Aug 2026 phantom-row class).
+			return tx.Where("item_id IN ? AND count = 0", body.IDs).Delete(&ItemShelf{}).Error
+		})
+		if err != nil {
+			GetLogger().Error("bulkDelete transaction failed: %v", err)
 			errorJSON(w, http.StatusInternalServerError, "bulk delete failed")
 			return
 		}
@@ -469,7 +554,7 @@ func handleBulkDelete(db *gorm.DB) http.HandlerFunc {
 			auditDetails(map[string]any{"ids": body.IDs}))
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"deleted": result.RowsAffected,
+			"deleted": deleted,
 		})
 	}
 }
@@ -481,12 +566,23 @@ func handleDeleteByBarcode(db *gorm.DB) http.HandlerFunc {
 		barcode := r.PathValue("barcode")
 		var link ItemBarcode
 		if err := db.Where("barcode = ?", barcode).First(&link).Error; err != nil {
-			errorJSON(w, http.StatusNotFound, "item not found")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not found")
+			} else {
+				GetLogger().Error("deleteByBarcode lookup failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
-		result := db.Model(&ItemShelf{}).Where("item_id = ?", link.ItemID).Update("count", 0)
-		if result.Error != nil {
-			GetLogger().Error("deleteByBarcode update failed for item %d: %v", link.ItemID, result.Error)
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&ItemShelf{}).Where("item_id = ?", link.ItemID).Update("count", 0).Error; err != nil {
+				return err
+			}
+			// Delete zero-count rows — same invariant as scan/setCount/moveItem.
+			return tx.Where("item_id = ? AND count = 0", link.ItemID).Delete(&ItemShelf{}).Error
+		})
+		if err != nil {
+			GetLogger().Error("deleteByBarcode transaction failed for item %d: %v", link.ItemID, err)
 			errorJSON(w, http.StatusInternalServerError, "delete failed")
 			return
 		}
@@ -508,8 +604,13 @@ func handleHardDelete(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var item Item
-		if db.First(&item, id).Error != nil {
-			errorJSON(w, http.StatusNotFound, "item not found")
+		if err := db.First(&item, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not found")
+			} else {
+				GetLogger().Error("hardDelete lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -541,12 +642,21 @@ func handleListShelves(db *gorm.DB) http.HandlerFunc {
 		listIDStr := r.URL.Query().Get("listId")
 		tx := db.Order("id ASC")
 		if listIDStr != "" {
-			if parsed, err := strconv.ParseUint(listIDStr, 10, 64); err == nil {
-				tx = tx.Where("list_id = ?", parsed)
+			parsed, err := strconv.ParseUint(listIDStr, 10, 64)
+			if err != nil {
+				// A malformed listId used to be silently ignored, returning
+				// shelves for EVERY list — fail loudly instead.
+				errorJSON(w, http.StatusBadRequest, "invalid listId")
+				return
 			}
+			tx = tx.Where("list_id = ?", parsed)
 		}
 		var shelves []Shelf
-		tx.Find(&shelves)
+		if err := tx.Find(&shelves).Error; err != nil {
+			GetLogger().Error("listShelves query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 		writeJSON(w, http.StatusOK, shelves)
 	}
 }
@@ -572,8 +682,13 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 		}
 		// Validate the list exists
 		var list List
-		if db.First(&list, listID).Error != nil {
-			errorJSON(w, http.StatusBadRequest, "list does not exist")
+		if err := db.First(&list, listID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "list does not exist")
+			} else {
+				GetLogger().Error("createShelf list lookup failed: %v", err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -602,8 +717,13 @@ func handleUpdateShelf(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var shelf Shelf
-		if db.First(&shelf, id).Error != nil {
-			errorJSON(w, http.StatusNotFound, "shelf not found")
+		if err := db.First(&shelf, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "shelf not found")
+			} else {
+				GetLogger().Error("updateShelf lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -649,8 +769,13 @@ func handleDeleteShelf(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var shelf Shelf
-		if db.First(&shelf, id).Error != nil {
-			errorJSON(w, http.StatusNotFound, "shelf not found")
+		if err := db.First(&shelf, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "shelf not found")
+			} else {
+				GetLogger().Error("deleteShelf lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
@@ -801,10 +926,16 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 			// Validate source and target shelves exist
 			var src, tgt Shelf
 			if err := tx.First(&src, body.SourceShelfID).Error; err != nil {
-				return fmt.Errorf("source shelf not found")
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("%w: source", ErrShelfNotFound)
+				}
+				return err
 			}
 			if err := tx.First(&tgt, body.TargetShelfID).Error; err != nil {
-				return fmt.Errorf("target shelf not found")
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("%w: target", ErrShelfNotFound)
+				}
+				return err
 			}
 
 			var source ItemShelf
@@ -814,7 +945,7 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 
 			// Reject requests that ask for more than available
 			if body.Quantity > source.Count {
-				return fmt.Errorf("insufficient count: requested %d, available %d", body.Quantity, source.Count)
+				return fmt.Errorf("%w: requested %d, available %d", ErrInsufficientCount, body.Quantity, source.Count)
 			}
 			qty = body.Quantity
 
@@ -824,7 +955,7 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 				return result.Error
 			}
 			if result.RowsAffected == 0 {
-				return fmt.Errorf("concurrent modification: source row changed")
+				return fmt.Errorf("%w: source row changed", ErrConcurrentModification)
 			}
 			if source.Count-qty <= 0 {
 				if err := tx.Delete(&source).Error; err != nil {
@@ -842,8 +973,16 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 
 		if err != nil {
 			GetLogger().Error("move item transaction failed: %v", err)
-			if strings.Contains(err.Error(), "insufficient count") {
+			if errors.Is(err, ErrInsufficientCount) || errors.Is(err, ErrConcurrentModification) {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
+			if errors.Is(err, ErrShelfNotFound) {
+				errorJSON(w, http.StatusBadRequest, "source or target shelf does not exist")
+				return
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not on source shelf")
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -864,7 +1003,11 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 func handleExport(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var items []Item
-		db.Preload("Barcodes").Preload("Shelves").Order("id ASC").Find(&items)
+		if err := db.Preload("Barcodes").Preload("Shelves").Order("id ASC").Find(&items).Error; err != nil {
+			GetLogger().Error("export query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 
 		rows := make([][]string, 0, len(items)+1)
 		rows = append(rows, []string{"id", "name", "count", "barcodes"})
@@ -894,7 +1037,11 @@ func handleExport(db *gorm.DB) http.HandlerFunc {
 func handleListLists(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var lists []List
-		db.Order("name ASC").Find(&lists)
+		if err := db.Order("name ASC").Find(&lists).Error; err != nil {
+			GetLogger().Error("listLists query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 		writeJSON(w, http.StatusOK, lists)
 	}
 }
@@ -934,8 +1081,13 @@ func handleUpdateList(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		var list List
-		if db.First(&list, id).Error != nil {
-			errorJSON(w, http.StatusNotFound, "list not found")
+		if err := db.First(&list, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "list not found")
+			} else {
+				GetLogger().Error("updateList lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 		var body struct {
@@ -982,12 +1134,18 @@ func handleDeleteList(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var list List
-		if db.First(&list, id).Error != nil {
-			errorJSON(w, http.StatusNotFound, "list not found")
+		if err := db.First(&list, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "list not found")
+			} else {
+				GetLogger().Error("deleteList lookup failed for %d: %v", id, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
 			return
 		}
 
 		// Cascade delete in a transaction
+		userID, userName := userFromContext(r)
 		err = db.Transaction(func(tx *gorm.DB) error {
 			// Find all shelves in this list
 			var shelfIDs []uint
@@ -1004,21 +1162,36 @@ func handleDeleteList(db *gorm.DB) http.HandlerFunc {
 				// Find items that now have no remaining ItemShelf rows.
 				// These are items that only existed on this list's shelves.
 				// Items that also exist on shelves in other lists survive.
-				var orphanedIDs []uint
-				if err := tx.Model(&Item{}).
-					Where("id NOT IN (SELECT item_id FROM item_shelves)").
-					Pluck("id", &orphanedIDs).Error; err != nil {
+				var orphaned []Item
+				if err := tx.Where("id NOT IN (SELECT item_id FROM item_shelves)").Find(&orphaned).Error; err != nil {
 					return err
 				}
 
 				// Delete barcodes only for items that are about to be deleted
-				if len(orphanedIDs) > 0 {
+				if len(orphaned) > 0 {
+					orphanedIDs := make([]uint, 0, len(orphaned))
+					for _, oi := range orphaned {
+						orphanedIDs = append(orphanedIDs, oi.ID)
+					}
 					if err := tx.Where("item_id IN ?", orphanedIDs).Delete(&ItemBarcode{}).Error; err != nil {
 						return err
 					}
 					// Delete the orphaned items
 					if err := tx.Where("id IN ?", orphanedIDs).Delete(&Item{}).Error; err != nil {
 						return err
+					}
+					// Per-item audit rows INSIDE the transaction — the old
+					// code only logged the list, so "who deleted the pork
+					// chops" was unanswerable after a list delete.
+					for _, oi := range orphaned {
+						if err := tx.Create(&AuditLog{
+							UserID: userID, UserName: userName,
+							Action: "hard_delete", EntityType: "item",
+							EntityID: oi.ID, EntityName: oi.Name,
+							Details: auditDetails(map[string]any{"via": "list_delete", "list_id": id, "list_name": list.Name}),
+						}).Error; err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -1064,13 +1237,23 @@ func handleNotifications(db *gorm.DB) http.HandlerFunc {
 
 		if actions := r.URL.Query().Get("actions"); actions != "" {
 			parts := strings.Split(actions, ",")
+			if len(parts) > 20 {
+				// Cap the IN-list size so a crafted query can't exceed
+				// SQLite's variable limit (and silently 500 via the Find).
+				errorJSON(w, http.StatusBadRequest, "too many actions — maximum 20")
+				return
+			}
 			for i, a := range parts {
 				parts[i] = strings.TrimSpace(a)
 			}
 			tx = tx.Where("action IN ?", parts)
 		}
 
-		tx.Find(&logs)
+		if err := tx.Find(&logs).Error; err != nil {
+			GetLogger().Error("notifications query failed: %v", err)
+			errorJSON(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 		writeJSON(w, http.StatusOK, logs)
 	}
 }

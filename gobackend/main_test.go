@@ -334,7 +334,7 @@ func TestScanDecrements(t *testing.T) {
 	}
 }
 
-func TestScanClampsToZeroAndDeletesRow(t *testing.T) {
+func TestScanOverDecrementRejected(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -342,9 +342,49 @@ func TestScanClampsToZeroAndDeletesRow(t *testing.T) {
 		"name": "Overflow", "barcode": "SCAN-003", "quantity": 2, "shelfId": 1,
 	}, true)
 
+	// Decrementing more than available is a 409 (mirrors moveItem), NOT a
+	// silent clamp to zero — a double-scan must not report success.
 	resp := doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
 		"barcode": "SCAN-003", "mode": "decrement", "quantity": 10, "shelfId": 1,
 	}, true)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 on over-decrement, got %d", resp.StatusCode)
+	}
+	var result map[string]interface{}
+	decodeJSON(t, resp, &result)
+	if result["error"] == nil {
+		t.Fatalf("expected error body, got %v", result)
+	}
+
+	// The row must still hold the original count.
+	check := doJSON(t, ts, "GET", "/api/item/SCAN-003", nil, true)
+	var lookup map[string]interface{}
+	decodeJSON(t, check, &lookup)
+	item := lookup["item"].(map[string]interface{})
+	shelves := item["shelves"].([]interface{})
+	if len(shelves) != 1 {
+		t.Fatalf("expected 1 shelf row after rejected decrement, got %d", len(shelves))
+	}
+	s := shelves[0].(map[string]interface{})
+	if int(s["count"].(float64)) != 2 {
+		t.Fatalf("expected count still 2, got %v", s["count"])
+	}
+}
+
+func TestScanExactDecrementDeletesRow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Exact", "barcode": "SCAN-004", "quantity": 2, "shelfId": 1,
+	}, true)
+
+	resp := doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
+		"barcode": "SCAN-004", "mode": "decrement", "quantity": 2, "shelfId": 1,
+	}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on exact decrement, got %d", resp.StatusCode)
+	}
 	var result map[string]interface{}
 	decodeJSON(t, resp, &result)
 	item := result["item"].(map[string]interface{})

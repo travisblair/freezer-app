@@ -37,7 +37,9 @@ type AppLogger struct {
 	stdLogger  *log.Logger // stderr (journald)
 	fileLogger *log.Logger // data/server.log
 	file       *os.File
+	logPath    string        // remembered so a failed open can be retried by rotateCheck
 	done       chan struct{} // closed on shutdown to stop rotation goroutine
+	closeOnce  sync.Once     // makes Close idempotent
 }
 
 var (
@@ -77,6 +79,8 @@ func newAppLogger() *AppLogger {
 	// Ensure directory exists
 	dir := filepath.Dir(logFile)
 	os.MkdirAll(dir, 0755)
+
+	al.logPath = logFile // rotateCheck retries the open on failure
 
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
@@ -241,6 +245,7 @@ const (
 )
 
 // rotateCheck runs every 5 minutes and rotates the log file if it exceeds maxLogSize.
+// Also retries a previously-failed log file open once per tick.
 func (l *AppLogger) rotateCheck() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -251,7 +256,25 @@ func (l *AppLogger) rotateCheck() {
 		case <-ticker.C:
 		}
 		l.mu.Lock()
+
+		// If the file was never opened (initial open failure) or a rotation
+		// reopen failed, retry once per tick — a transient SD-card error
+		// must not kill file logging permanently. The old code left `file`
+		// pointing at a CLOSED file after a failed reopen, so every later
+		// tick hit Stat() → error → continue forever with zero retry.
 		if l.file == nil {
+			if l.logPath != "" {
+				if f, err := os.OpenFile(l.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+					l.file = f
+					l.fileLogger = log.New(f, "", 0)
+					log.Printf("INFO: log file opened (after earlier failure)")
+				} else {
+					// File output is exactly what's broken — stderr is the
+					// only remaining channel. Bare log.Printf (not l.Error,
+					// which would deadlock on l.mu held above).
+					log.Printf("ERROR: log file open failed (will retry next tick): %v", err)
+				}
+			}
 			l.mu.Unlock()
 			continue
 		}
@@ -264,25 +287,32 @@ func (l *AppLogger) rotateCheck() {
 		logPath := l.file.Name()
 		l.fileLogger = nil
 		l.file.Close()
+		l.file = nil // a failed reopen below must be retried, not hit a closed file
 
 		// Shift old backups: server.log.2 → server.log.3, etc.
 		for i := maxLogFiles - 1; i >= 1; i-- {
 			old := fmt.Sprintf("%s.%d", logPath, i)
 			new := fmt.Sprintf("%s.%d", logPath, i+1)
-			os.Rename(old, new)
+			if err := os.Rename(old, new); err != nil && !os.IsNotExist(err) {
+				log.Printf("ERROR: log rotation rename %s -> %s failed: %v", old, new, err)
+			}
 		}
-		os.Rename(logPath, logPath+".1")
+		if err := os.Rename(logPath, logPath+".1"); err != nil && !os.IsNotExist(err) {
+			log.Printf("ERROR: log rotation rename %s -> %s.1 failed: %v", logPath, logPath, err)
+		}
 
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
+		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 			l.file = f
 			l.fileLogger = log.New(f, "", 0)
+		} else {
+			log.Printf("ERROR: log file reopen after rotation failed (will retry next tick): %v", err)
 		}
 		l.mu.Unlock()
 	}
 }
 
 // Close flushes and closes the log file. Stops the rotation goroutine.
+// Idempotent: closeOnce guards the done-channel close.
 func (l *AppLogger) Close() {
 	l.mu.Lock()
 	if l.file != nil {
@@ -293,7 +323,7 @@ func (l *AppLogger) Close() {
 	l.mu.Unlock()
 	// Signal rotation goroutine to stop (outside lock to avoid deadlock)
 	if l.done != nil {
-		close(l.done)
+		l.closeOnce.Do(func() { close(l.done) })
 	}
 }
 

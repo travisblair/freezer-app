@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +238,90 @@ func TestTrustedOrigin(t *testing.T) {
 		if got := trustedOrigin(tt.origin); got != tt.expected {
 			t.Errorf("trustedOrigin(%q) = %v, want %v", tt.origin, got, tt.expected)
 		}
+	}
+}
+
+// ── Unit: csvSafe leading-whitespace formula guard ─────────────────────
+
+func TestCsvSafeLeadingWhitespace(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"=cmd", "'=cmd"},
+		{" =cmd", "' =cmd"},
+		{"	+SUM(A1)", "'	+SUM(A1)"},
+		{"@import", "'@import"},
+		{"normal", "normal"},
+		{"-1.5", "'-1.5"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := csvSafe(tt.in); got != tt.want {
+			t.Errorf("csvSafe(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// ── Unit: csrfProtect requires a JSON Content-Type outright ────────────
+
+func TestCsrfProtectRejectsMissingContentType(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	// Bodyless cross-site fetch sends NO Content-Type — must be rejected.
+	req := httptest.NewRequest(http.MethodPost, "/api/item/scan", nil)
+	rec := httptest.NewRecorder()
+	csrfProtect(next).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing Content-Type, got %d", rec.Code)
+	}
+	if called {
+		t.Fatal("handler must not run when Content-Type is missing")
+	}
+
+	// JSON content type passes.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/item/scan", strings.NewReader("{}"))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	csrfProtect(next).ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for application/json, got %d", rec2.Code)
+	}
+	if !called {
+		t.Fatal("handler must run for application/json requests")
+	}
+}
+
+// ── Integration: bulkDelete removes zero-count rows (no ghosts) ────────
+
+func TestBulkDeleteRemovesZeroRows(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	barcode := fmt.Sprintf("GHOST-%d", time.Now().UnixNano())
+	createResp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Ghost bait", "barcode": barcode, "quantity": 3, "shelfId": 1,
+	}, true)
+	var created map[string]interface{}
+	decodeJSON(t, createResp, &created)
+	id := uint(created["id"].(float64))
+
+	resp := doJSON(t, ts, "POST", "/api/items/bulk-delete", map[string]interface{}{
+		"ids": []interface{}{id},
+	}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on bulk delete, got %d", resp.StatusCode)
+	}
+
+	// The ItemShelf row must be DELETED, not left as a zero-count ghost —
+	// scan/setCount/moveItem all delete at zero; bulkDelete must too. The
+	// lookup preloads Shelves, so a ghost would show up as a zero-count entry.
+	lookupResp := doJSON(t, ts, "GET", "/api/item/"+barcode, nil, true)
+	var lookup map[string]interface{}
+	decodeJSON(t, lookupResp, &lookup)
+	item := lookup["item"].(map[string]interface{})
+	shelves, _ := item["shelves"].([]interface{})
+	if len(shelves) != 0 {
+		t.Fatalf("expected no shelf rows after bulk delete, got %d: %v", len(shelves), shelves)
 	}
 }

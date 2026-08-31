@@ -247,8 +247,12 @@ export function useScanner(): ScannerControls {
       setExpanded(false);
     } else {
       setExpanded(true);
-      // Load shelves for the shelf select dropdown
-      api.allShelves().then(setShelves).catch(() => {});
+      // Load shelves for the shelf select dropdown. Failure degrades to
+      // the item's first shelf / shelf 1 default — logged so the dropdown
+      // being empty is diagnosable.
+      api.allShelves().then(setShelves).catch((err) => {
+        if (import.meta.env.DEV) console.error("Failed to load scanner shelves", err);
+      });
     }
   }
 

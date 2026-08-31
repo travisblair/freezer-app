@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { totalCount, getFirstShelfId } from "./helpers";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { totalCount, getFirstShelfId, createPerKeyDebouncer } from "./helpers";
 import type { Item } from "./types";
 
 describe("totalCount", () => {
@@ -59,5 +59,44 @@ describe("getFirstShelfId", () => {
         { shelfId: 2, id: 2, itemId: 1, count: 1 },
       ],
     })).toBe(5);
+  });
+});
+
+describe("createPerKeyDebouncer", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("fires each key's call independently (cross-key edits are not dropped)", () => {
+    const calls: [number, number][] = [];
+    const d = createPerKeyDebouncer((key: number, value: number) => calls.push([key, value]), 400);
+
+    d.schedule(1, 5);
+    d.schedule(2, 7); // different key within the window — must NOT cancel key 1
+
+    vi.advanceTimersByTime(400);
+    expect(calls).toEqual([[1, 5], [2, 7]]);
+  });
+
+  it("coalesces same-key edits to the latest value", () => {
+    const calls: [number, number][] = [];
+    const d = createPerKeyDebouncer((key: number, value: number) => calls.push([key, value]), 400);
+
+    d.schedule(1, 5);
+    vi.advanceTimersByTime(100);
+    d.schedule(1, 6);
+    vi.advanceTimersByTime(400);
+
+    expect(calls).toEqual([[1, 6]]);
+  });
+
+  it("cancelAll clears pending timers", () => {
+    const calls: [number, number][] = [];
+    const d = createPerKeyDebouncer((key: number, value: number) => calls.push([key, value]), 400);
+
+    d.schedule(1, 5);
+    d.cancelAll();
+    vi.advanceTimersByTime(400);
+
+    expect(calls).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -191,7 +192,13 @@ func getCookieName() string {
 }
 
 func isSecure(r *http.Request) bool {
-	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	if r.TLS != nil {
+		return true
+	}
+	// Only trust X-Forwarded-Proto from the known loopback proxy (Tailscale
+	// Funnel). A spoofed header from a LAN client must not influence the
+	// cookie Secure flag.
+	return r.Header.Get("X-Forwarded-Proto") == "https" && isTrustedProxy(r)
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, r *http.Request) {
@@ -335,7 +342,14 @@ func authCheckHandler(db *gorm.DB) http.HandlerFunc {
 		var session Session
 		now := time.Now()
 		if err := db.Where("token_hash = ? AND expires_at > ?", hashToken(token), now).First(&session).Error; err != nil {
-			writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+			} else {
+				// A transient DB error must not masquerade as "logged out" —
+				// surface it so the failure is visible, not a silent logout.
+				GetLogger().Error("auth check session lookup failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
@@ -347,7 +361,12 @@ func logoutHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := getSessionToken(r)
 		if token != "" {
-			db.Where("token_hash = ?", hashToken(token)).Delete(&Session{})
+			if err := db.Where("token_hash = ?", hashToken(token)).Delete(&Session{}).Error; err != nil {
+				// The cookie is cleared regardless, but a failed revocation
+				// leaves a valid token in the DB for up to 30 days — log it
+				// loudly instead of diverging security state silently.
+				GetLogger().Error("logout: failed to revoke session: %v", err)
+			}
 		}
 		clearSessionCookie(w, r)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -368,14 +387,25 @@ func requireAuth(db *gorm.DB, next http.Handler) http.Handler {
 		var session Session
 		now := time.Now()
 		if err := db.Where("token_hash = ? AND expires_at > ?", hashToken(token), now).First(&session).Error; err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			} else {
+				GetLogger().Error("requireAuth session lookup failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
 			return
 		}
 
 		// Load user name for audit logging
 		var user User
 		if err := db.First(&user, session.UserID).Error; err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Session references a deleted user — treat as unauthenticated.
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			} else {
+				GetLogger().Error("requireAuth user lookup failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
 			return
 		}
 
@@ -397,7 +427,11 @@ func csrfProtect(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
 			r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			ct := r.Header.Get("Content-Type")
-			if ct != "" && !strings.HasPrefix(ct, "application/json") {
+			// Require the header outright: an EMPTY Content-Type previously
+			// passed this guard, which let cross-site bodyless POSTs through
+			// (defense-in-depth only — SameSite=Strict is the real boundary,
+			// but the guard shouldn't have an escape hatch it doesn't need).
+			if !strings.HasPrefix(ct, "application/json") {
 				writeJSON(w, http.StatusBadRequest, map[string]string{
 					"error": "Content-Type must be application/json",
 				})

@@ -23,8 +23,11 @@ func errorJSON(w http.ResponseWriter, status int, msg string) {
 
 // csvSafe prefixes a cell value with a single quote if it starts with a
 // character that triggers formula execution in Excel/LibreOffice (=, +, -, @).
+// Leading whitespace is trimmed before the check — some spreadsheet versions
+// still execute a formula cell like " =cmd".
 func csvSafe(s string) string {
-	if len(s) > 0 && (s[0] == '=' || s[0] == '+' || s[0] == '-' || s[0] == '@') {
+	trimmed := strings.TrimLeft(s, " 	")
+	if len(trimmed) > 0 && (trimmed[0] == '=' || trimmed[0] == '+' || trimmed[0] == '-' || trimmed[0] == '@') {
 		return "'" + s
 	}
 	return s

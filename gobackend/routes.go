@@ -261,7 +261,12 @@ func startSessionCleanup(db *gorm.DB) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
-		db.Where("expires_at < ?", time.Now()).Delete(&Session{})
+		if err := db.Where("expires_at < ?", time.Now()).Delete(&Session{}).Error; err != nil {
+			// Expired rows persist until the next tick; every auth query
+			// filters on expires_at so there's no security impact — but a
+			// silent failure hides table growth.
+			GetLogger().Error("session cleanup failed: %v", err)
+		}
 	}
 }
 
@@ -276,7 +281,10 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 	})
 	mux.HandleFunc("GET /api/auth/check", authCheckHandler(db))
 	mux.HandleFunc("POST /api/auth", authHandler(db))
-	mux.HandleFunc("POST /api/auth/logout", logoutHandler(db))
+	// Logout is a mutation too: it needs auth (so an attacker can't
+	// anonymously trigger it), the shared rate limiter, and CSRF
+	// protection like every other POST.
+	mux.Handle("POST /api/auth/logout", requireAuth(db, globalRateLimit(csrfProtect(logoutHandler(db)))))
 
 	// robots.txt — tell crawlers to stay out
 	mux.HandleFunc("GET /robots.txt", func(w http.ResponseWriter, r *http.Request) {

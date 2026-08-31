@@ -1,6 +1,6 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, onCleanup } from "solid-js";
 import type { Item, Shelf } from "../types";
-import { totalCount } from "../helpers";
+import { totalCount, createPerKeyDebouncer } from "../helpers";
 import { api } from "../api";
 import {
   items, searchQuery, showOutOfStock, setShowOutOfStock,
@@ -113,15 +113,18 @@ export default function ItemTable() {
 
   const vs = () => selShelf() === null ? shelves() : shelves().filter(s => s.id === selShelf());
 
-  let countTimer: ReturnType<typeof setTimeout> | null = null;
-  async function updateCount(shelfId: number, value: number) {
-    if (countTimer) clearTimeout(countTimer);
-    countTimer = setTimeout(async () => {
-      try {
-        await api.setShelfCount(shelfId, value);
-        await loadItems();
-      } catch (_) { flashStatus("Failed to update count"); }
-    }, 400);
+  // Per-shelf debounce: rapid edits on DIFFERENT rows each fire; only
+  // same-row edits coalesce. The old single shared timer silently dropped
+  // every pending edit except the last one (counts reverting after reload).
+  const countDebouncer = createPerKeyDebouncer((shelfId: number, value: number) => {
+    api.setShelfCount(shelfId, value)
+      .then(loadItems)
+      .catch(() => flashStatus("Failed to update count"));
+  }, 400);
+  onCleanup(() => countDebouncer.cancelAll());
+
+  function updateCount(shelfId: number, value: number) {
+    countDebouncer.schedule(shelfId, value);
   }
 
   return (
@@ -225,7 +228,7 @@ export default function ItemTable() {
                                 const div = (e.target as HTMLElement).closest(".count-editor")!;
                                 const input = div.querySelector("input")!;
                                 const sid = Number(div.getAttribute("data-shelf-id"));
-                                const v = Math.max(0, parseInt(input.value, 10) - 1);
+                                const v = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
                                 input.value = String(v);
                                 updateCount(sid, v);
                               }}>{count === 1 ? "🗑" : "−"}</button>
@@ -247,7 +250,7 @@ export default function ItemTable() {
                                 const div = (e.target as HTMLElement).closest(".count-editor")!;
                                 const input = div.querySelector("input")!;
                                 const sid = Number(div.getAttribute("data-shelf-id"));
-                                const v = Math.min(9999, parseInt(input.value, 10) + 1);
+                                const v = Math.min(9999, (parseInt(input.value, 10) || 0) + 1);
                                 input.value = String(v);
                                 updateCount(sid, v);
                               }}>+</button>

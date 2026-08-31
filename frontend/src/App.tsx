@@ -123,10 +123,12 @@ export default function App() {
             title="Edit list name"
             initialValue={currentListName()}
             onSave={async (name) => {
-              await api.updateList(currentListId(), name);
-              const fresh = await api.getLists();
-              setLists(fresh);
-              setRenameOpen(false);
+              try {
+                await api.updateList(currentListId(), name);
+                const fresh = await api.getLists();
+                setLists(fresh);
+                setRenameOpen(false);
+              } catch (_) { flashStatus("Failed to rename list"); }
             }}
             onCancel={() => setRenameOpen(false)}
           />
@@ -138,11 +140,13 @@ export default function App() {
             placeholder="List name"
             saveLabel="Create"
             onSave={async (name) => {
-              const created = await api.createList(name) as { id: number; name: string };
-              const fresh = await api.getLists();
-              setLists(fresh);
-              setCurrentListId(created.id);
-              setNewListOpen(false);
+              try {
+                const created = await api.createList(name) as { id: number; name: string };
+                const fresh = await api.getLists();
+                setLists(fresh);
+                setCurrentListId(created.id);
+                setNewListOpen(false);
+              } catch (_) { flashStatus("Failed to create list"); }
             }}
             onCancel={() => setNewListOpen(false)}
           />

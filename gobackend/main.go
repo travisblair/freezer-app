@@ -38,13 +38,20 @@ func main() {
 
 	db := OpenDB()
 
-	// Graceful shutdown plumbing
+	// Graceful shutdown plumbing. signal.NotifyContext fans the shutdown
+	// signal out to EVERY waiter via ctx.Done() — the previous shared
+	// `stop` channel was selected on by main, the watchdog, AND the
+	// heartbeat goroutine, and a channel receive wakes exactly one waiter:
+	// 2/3 of SIGTERMs were consumed by a helper goroutine and main never
+	// saw them (no clean shutdown, no clean-stop marker, false crash alert
+	// on next boot). Aug 2026 audit.
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	sqlDB, err := db.DB()
 	if err != nil {
 		logger.Fatal("failed to get underlying sql.DB: %v", err)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	serverErr := make(chan error, 1)
 
 	mux := http.NewServeMux()
@@ -74,6 +81,10 @@ func main() {
 		MaxHeaderBytes: 1 << 16, // 64KB
 	}
 
+	// Track startup time for heartbeat — set BEFORE the goroutines launch
+	// so heartbeatStatus() never races the write.
+	startupTime = time.Now()
+
 	// Systemd watchdog integration
 	go func() {
 		defer func() {
@@ -81,7 +92,7 @@ func main() {
 				logger.Error("Watchdog goroutine panicked: %v", r)
 			}
 		}()
-		startWatchdog(stop)
+		startWatchdog(shutdownCtx.Done())
 	}()
 
 	// Heartbeat alerts (every 6 hours, first after 5 minutes)
@@ -91,7 +102,7 @@ func main() {
 				logger.Error("Heartbeat goroutine panicked: %v", r)
 			}
 		}()
-		StartHeartbeat(stop, heartbeatStatus)
+		StartHeartbeat(shutdownCtx.Done(), heartbeatStatus)
 	}()
 
 	// Auth rate-limit map cleanup (prevents unbounded memory growth)
@@ -122,9 +133,6 @@ func main() {
 		startSessionCleanup(db)
 	}()
 
-	// Track startup time for heartbeat
-	startupTime = time.Now()
-
 	// Run server in background so we can wait for shutdown signal
 	go func() {
 		logger.Info("Freezer app server running on http://localhost:%s", port)
@@ -140,8 +148,8 @@ func main() {
 
 	// Wait for termination signal or server error
 	select {
-	case sig := <-stop:
-		logger.Info("Received signal %v, shutting down gracefully...", sig)
+	case <-shutdownCtx.Done():
+		logger.Info("Shutdown signal received, shutting down gracefully...")
 	case err := <-serverErr:
 		logger.Error("Server stopped unexpectedly: %v (shutting down)", err)
 	}
@@ -193,7 +201,11 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 // HSTS is only set on HTTPS connections to avoid poisoning localhost.
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS != nil {
+		// HSTS is set when the request is HTTPS directly OR arrives via a
+		// trusted proxy that terminated TLS (Tailscale Funnel speaks plain
+		// HTTP to :3000, so r.TLS is nil for every real production request —
+		// the old r.TLS-only check was dead code).
+		if r.TLS != nil || (r.Header.Get("X-Forwarded-Proto") == "https" && isTrustedProxy(r)) {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -303,7 +315,7 @@ func heartbeatStatus() string {
 
 // startWatchdog sends systemd watchdog keep-alives every 15 seconds.
 // Also sends READY=1 on startup so Type=notify works.
-func startWatchdog(stop <-chan os.Signal) {
+func startWatchdog(stop <-chan struct{}) {
 	// Notify systemd that the service has started successfully
 	notifyWatchdog("READY=1")
 
