@@ -82,19 +82,36 @@ func OpenDB() *gorm.DB {
 		db.Create(&shelf1)
 	}
 
-	// One-time: move existing item counts from the old `items.count` column
-	// into ItemShelf rows. GORM AutoMigrate adds columns but never drops
-	// them, so `count` persists. The `NOT IN` guard makes this idempotent.
-	var hasCount bool
-	db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasCount)
-	if hasCount {
-		db.Exec(`
+	// One-time: move existing item counts from the legacy `items.count`
+	// column into ItemShelf rows. GORM AutoMigrate adds columns but never
+	// drops them, so `count` persists. After migrating, the legacy counts
+	// are zeroed ("consumed") — the app never reads or writes items.count
+	// anymore, and zeroing makes this idempotent even when every item is
+	// out of stock.
+	//
+	// Aug 2026 incident: the old guard (column exists + "no rows") re-ran
+	// this INSERT on EVERY boot, re-materializing stale June/July counts as
+	// phantom Shelf 1 rows for each out-of-stock item (19 rows after the
+	// post-cleanup deploy restart). The NOT IN guard can never be relied
+	// on alone: rows are deleted at count 0, so an out-of-stock item is
+	// always "missing a row" by design.
+	var hasLegacyCount bool
+	db.Raw("SELECT COUNT(*) > 0 FROM pragma_table_info('items') WHERE name = 'count'").Scan(&hasLegacyCount)
+	if hasLegacyCount {
+		if err := db.Exec(`
 			INSERT INTO item_shelves (item_id, shelf_id, count)
 			SELECT id, ?, count FROM items
-			WHERE count > 0 AND id NOT IN (
+			WHERE count > 0 AND deleted = 0 AND id NOT IN (
 				SELECT item_id FROM item_shelves
 			)
-		`, shelf1.ID)
+		`, shelf1.ID).Error; err != nil {
+			GetLogger().Error("legacy count migration failed: %v", err)
+		}
+		// Consume the legacy counts so later boots can never re-materialize
+		// them. From here on, item_shelves is the only source of truth.
+		if err := db.Exec(`UPDATE items SET count = 0 WHERE count > 0`).Error; err != nil {
+			GetLogger().Error("legacy count consumption failed: %v", err)
+		}
 	}
 
 	return db
