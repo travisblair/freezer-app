@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -86,6 +87,17 @@ func trySendAlert(subject, body string) error {
 	}
 	defer client.Close()
 	_ = conn.SetDeadline(time.Now().Add(sessionTimeout))
+	// Upgrade to TLS when the server offers it (smtp.SendMail does this
+	// automatically; the manual rewrite dropped it, which made
+	// smtp.PlainAuth refuse to send credentials — "unencrypted
+	// connection" — and killed every alert silently. Regression-pinned
+	// by TestTrySendAlertUsesStartTLS.)
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: cfg.host}); err != nil {
+			conn.Close()
+			return fmt.Errorf("starttls: %w", err)
+		}
+	}
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
