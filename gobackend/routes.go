@@ -125,10 +125,16 @@ func isTrustedProxy(r *http.Request) bool {
 //   - 512 bytes flushed every 1s
 //   - Max 10 minutes per connection
 //   - ~300 KB per connection, ~1.5 MB worst-case total
-//   - When all slots are full, new probes get nothing (connection hangs)
+//   - When all slots are full, new probes hang (BOUNDED: 32 waiters,
+//     10-minute ceiling each; beyond that an instant 200 as the valve)
 //   - Context cancellation on client disconnect or server shutdown
 
 var tarpitSlots = make(chan struct{}, 5)
+
+// tarpitWaitSlots bounds the slot-exhausted path: at most this many
+// probes may hang waiting; the overflow gets the instant empty 200 as a
+// pressure valve (bounded resource use on the Pi Zero W).
+var tarpitWaitSlots = make(chan struct{}, 32)
 
 // scannerProbes are paths that automated vulnerability scanners commonly
 // probe.  Add more as you discover them in the logs.
@@ -177,7 +183,22 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 	case tarpitSlots <- struct{}{}:
 		defer func() { <-tarpitSlots }()
 	default:
-		<-r.Context().Done()
+		// All slots busy: hang the connection WITHOUT consuming a tarpit
+		// slot — a bare return would let net/http complete the response
+		// as an instant empty 200, which scanners read as "path exists".
+		// Bounded by the waiter cap + 10-minute ceiling so a hostile
+		// client can't exhaust fds/goroutines; overflow gets the 200 as
+		// the valve.
+		select {
+		case tarpitWaitSlots <- struct{}{}:
+			defer func() { <-tarpitWaitSlots }()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Minute):
+			}
+		default:
+			// waiter cap exceeded — instant empty 200 (bounded)
+		}
 		return
 	}
 

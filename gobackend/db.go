@@ -44,6 +44,10 @@ func OpenDB() *gorm.DB {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
 		dbPath = defaultDBPath()
+		// Fail-loud about WHERE the DB lives: the default moved from the
+		// working directory to the binary's directory, and a silent
+		// second database is exactly the failure class this fixed.
+		GetLogger().Info("DB_PATH unset — using default database at %s", dbPath)
 	}
 
 	// Ensure the parent directory exists so sqlite can create the file.

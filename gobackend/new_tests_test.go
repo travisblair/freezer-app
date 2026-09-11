@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // ── Unit: rehashIfNeeded ───────────────────────────────────────────────
@@ -386,29 +389,25 @@ func TestDefaultDBPathNextToBinary(t *testing.T) {
 	if got := defaultDBPath(); got != want {
 		t.Fatalf("defaultDBPath() = %q, want %q", got, want)
 	}
-	// The old bug: the default resolved from the working directory, so a
-	// process started from anywhere else silently opened a fresh empty DB.
-	cwd, _ := os.Getwd()
-	if got := defaultDBPath(); got == filepath.Join(cwd, "data", "freezer.db") {
-		t.Fatalf("defaultDBPath() still resolves from cwd: %q", got)
-	}
 }
 
-func TestServerBaseContextCancelsRequests(t *testing.T) {
+func TestNewHTTPServerBaseContextCancelsRequests(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Exercise the PRODUCTION server construction (newHTTPServer is what
+	// main() calls) — a hand-built server here would only test stdlib.
+	srv := newHTTPServer("127.0.0.1:0", http.NewServeMux(), ctx)
+	if srv.BaseContext == nil {
+		t.Fatal("newHTTPServer must wire BaseContext to the shutdown context")
+	}
+
 	returned := make(chan struct{})
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hang", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 		close(returned)
 	})
 
-	srv := &http.Server{
-		Handler:     mux,
-		BaseContext: func(net.Listener) context.Context { return ctx },
-	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -451,6 +450,14 @@ func TestTarpitSlotExhaustionHangs(t *testing.T) {
 		}
 		fillers = append(fillers, resp)
 	}
+	// Close the fillers on EVERY exit path — without this, a failure here
+	// leaves 5 streaming tarpit connections open and httptest.Server.Close
+	// blocks on them for the full test timeout.
+	t.Cleanup(func() {
+		for _, r := range fillers {
+			r.Body.Close()
+		}
+	})
 	time.Sleep(500 * time.Millisecond) // let all five claim their slots
 
 	// The 6th probe must hang, not complete as an instant empty 200 (which
@@ -461,13 +468,14 @@ func TestTarpitSlotExhaustionHangs(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("6th tarpit request completed with status %d; expected it to hang", resp.StatusCode)
 	}
-
+	// Close the fillers IN THE BODY: the deferred ts.Close() runs before
+	// t.Cleanup, and it blocks on still-streaming tarpit handlers.
 	for _, r := range fillers {
 		r.Body.Close()
 	}
 }
 
-func TestOrderedShelvesPreloadContract(t *testing.T) {
+func TestOrderedShelvesPreloadSQL(t *testing.T) {
 	tmp := t.TempDir()
 	prev := os.Getenv("DB_PATH")
 	os.Setenv("DB_PATH", filepath.Join(tmp, "freezer.db"))
@@ -482,22 +490,242 @@ func TestOrderedShelvesPreloadContract(t *testing.T) {
 	if err := db.Create(&secondShelf).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Explicit out-of-order IDs: 10 inserted before 9.
-	if err := db.Create(&ItemShelf{ID: 10, ItemID: item.ID, ShelfID: 1, Count: 5}).Error; err != nil {
+	// A result-order test cannot discriminate on SQLite (rowid scan already
+	// returns id order), so the honest assertion is on the generated SQL:
+	// orderedShelves() must add ORDER BY id ASC to the preload query.
+	// Capture the preload SQL via a query callback (DryRun does not emit
+	// preload queries into Statement.SQL).
+	var preloadSQL string
+	cb := db.Callback().Query().After("gorm:query")
+	if err := cb.Register("capture:shelves_preload_sql", func(db *gorm.DB) {
+		sql := db.Statement.SQL.String()
+		if strings.Contains(sql, "FROM `item_shelves`") {
+			preloadSQL = sql
+		}
+	}); err != nil {
+		t.Fatalf("register capture callback: %v", err)
+	}
+	defer cb.Remove("capture:shelves_preload_sql")
+
+	var items []Item
+	if err := db.Preload("Shelves", orderedShelves()).Find(&items).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&ItemShelf{ID: 9, ItemID: item.ID, ShelfID: secondShelf.ID, Count: 3}).Error; err != nil {
+	if !strings.Contains(preloadSQL, "ORDER BY id ASC") {
+		t.Fatalf("preload SQL missing ORDER BY id ASC: %q", preloadSQL)
+	}
+}
+
+func TestTarpitWaiterOverflowGetsInstantResponse(t *testing.T) {
+	if _, err := os.Stat("../frontend/dist"); err != nil {
+		t.Skip("frontend dist not built — tarpit routes unregistered")
+	}
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Fill all 5 tarpit slots.
+	var fillers []*http.Response
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(ts.URL + "/.env")
+		if err != nil {
+			t.Fatalf("filler %d: %v", i, err)
+		}
+		fillers = append(fillers, resp)
+	}
+	t.Cleanup(func() {
+		for _, r := range fillers {
+			r.Body.Close()
+		}
+	})
+	time.Sleep(500 * time.Millisecond) // let all five claim their slots
+
+	// 32 waiters fill tarpitWaitSlots (they hang); the 33rd overflows and
+	// must get an instant 200 — the bounded-resource valve.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	instant := 0
+	timedOut := 0
+	for i := 0; i < 33; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			client := &http.Client{Timeout: 1500 * time.Millisecond}
+			resp, err := client.Get(ts.URL + "/.env")
+			if err != nil {
+				mu.Lock()
+				timedOut++
+				mu.Unlock()
+				return
+			}
+			resp.Body.Close()
+			mu.Lock()
+			instant++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if instant != 1 {
+		t.Fatalf("expected exactly 1 instant overflow response, got %d (timedOut=%d)", instant, timedOut)
+	}
+	// Close the fillers IN THE BODY: the deferred ts.Close() runs before
+	// t.Cleanup, and it blocks on still-streaming tarpit handlers.
+	for _, r := range fillers {
+		r.Body.Close()
+	}
+}
+
+func TestHashPasswordCmdPreservesWhitespace(t *testing.T) {
+	// Pin the CALL SITE, not just the helper: a revert to TrimSpace in
+	// hashPasswordCmd must fail this test.
+	oldIn, oldOut, oldErr := os.Stdin, os.Stdout, os.Stderr
+	defer func() { os.Stdin, os.Stdout, os.Stderr = oldIn, oldOut, oldErr }()
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
 		t.Fatal(err)
+	}
+	os.Stdin = inR
+	if _, err := inW.WriteString(" secret \n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = outW
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = errW
+
+	hashPasswordCmd()
+
+	outW.Close()
+	errW.Close()
+	io.ReadAll(errR) // drain the "Password: " prompt
+	errR.Close()
+	data, err := io.ReadAll(outR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := strings.TrimSpace(string(data))
+	if hash == "" {
+		t.Fatal("hashPasswordCmd produced no output")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(" secret ")); err != nil {
+		t.Fatalf("hash does not match the padded password (TrimSpace regression?): %v", err)
+	}
+}
+
+func TestMissingEntityMappings(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Existing barcode so the scan reaches the shelf-existence check.
+	resp := doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Scannable", "barcode": "SCANME1", "quantity": 1, "shelfId": 1,
+	}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create fixture: expected 201, got %d", resp.StatusCode)
 	}
 
-	// orderedShelves() pins the scan-fallback contract: Shelves[0] is the
-	// lowest row id, deterministically. Without ORDER BY the order is
-	// whatever the engine happens to return.
-	var got Item
-	if err := db.Preload("Shelves", orderedShelves()).First(&got, item.ID).Error; err != nil {
-		t.Fatal(err)
+	// Scan targeting a nonexistent shelf: 400 "shelf does not exist".
+	resp = doJSON(t, ts, "POST", "/api/item/scan", map[string]interface{}{
+		"barcode": "SCANME1", "mode": "increment", "quantity": 1, "shelfId": 99999,
+	}, true)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("scan: expected 400, got %d", resp.StatusCode)
 	}
-	if len(got.Shelves) != 2 || got.Shelves[0].ID != 9 || got.Shelves[1].ID != 10 {
-		t.Fatalf("shelves not ordered by id ASC: %+v", got.Shelves)
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	if body["error"] != "shelf does not exist" {
+		t.Fatalf("scan: expected 'shelf does not exist', got %v", body["error"])
 	}
+
+	// Create with a nonexistent shelf: 400.
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "X", "quantity": 1, "shelfId": 99999,
+	}, true)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create: expected 400, got %d", resp.StatusCode)
+	}
+	decodeJSON(t, resp, &body)
+	if body["error"] != "shelf does not exist" {
+		t.Fatalf("create: expected 'shelf does not exist', got %v", body["error"])
+	}
+
+	// createShelf with a nonexistent list: 400.
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Ghost Shelf", "listId": 99999,
+	}, true)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("createShelf: expected 400, got %d", resp.StatusCode)
+	}
+	decodeJSON(t, resp, &body)
+	if body["error"] != "list does not exist" {
+		t.Fatalf("createShelf: expected 'list does not exist', got %v", body["error"])
+	}
+}
+
+func TestDeleteListKeepsOwnZeroRowItems(t *testing.T) {
+	// Decision (Sept 2026 review): the scoped sweep only deletes items it
+	// can PROVE belonged to the deleted list (candidates = items with rows
+	// on its shelves). An item on the doomed list whose count was zeroed
+	// (row deleted) has no provable membership, so it SURVIVES rather than
+	// risk data loss. Pin that semantics.
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{"name": "Doomed"}, true)
+	var doomedList List
+	decodeJSON(t, resp, &doomedList)
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{"name": "S", "listId": doomedList.ID}, true)
+	var shelf Shelf
+	decodeJSON(t, resp, &shelf)
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Ghost", "quantity": 2, "shelfId": shelf.ID,
+	}, true)
+	var ghost Item
+	decodeJSON(t, resp, &ghost)
+
+	// Zero the count — the row is deleted, leaving a zero-row item.
+	var ghostShelfRowID uint
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var items []Item
+	decodeJSON(t, resp, &items)
+	for _, i := range items {
+		if i.ID == ghost.ID && len(i.Shelves) > 0 {
+			ghostShelfRowID = i.Shelves[0].ID
+		}
+	}
+	if ghostShelfRowID == 0 {
+		t.Fatal("ghost item-shelf row not found")
+	}
+	resp = doJSON(t, ts, "PATCH", fmt.Sprintf("/api/item-shelf/%d", ghostShelfRowID), map[string]interface{}{"count": 0}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("zero count: expected 200, got %d", resp.StatusCode)
+	}
+
+	// Delete the list. The zero-row item survives (conservative semantics).
+	resp = doJSON(t, ts, "DELETE", fmt.Sprintf("/api/lists/%d", doomedList.ID), nil, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("delete list: expected 200, got %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	decodeJSON(t, resp, &items)
+	for _, i := range items {
+		if i.ID == ghost.ID {
+			return // survived — semantics pinned
+		}
+	}
+	t.Fatal("zero-row item on the deleted list was swept (semantics changed)")
 }

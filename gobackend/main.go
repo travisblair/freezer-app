@@ -71,19 +71,7 @@ func main() {
 		port = "3000"
 	}
 
-	srv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      requestSizeLimitMiddleware(handler),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
-		// Pi Zero W has limited file descriptors; limit idle conns
-		MaxHeaderBytes: 1 << 16, // 64KB
-		// BaseContext roots every request context in the shutdown signal,
-		// so in-flight tarpit connections bail on SIGTERM instead of
-		// stretching Shutdown to its deadline.
-		BaseContext: func(net.Listener) context.Context { return shutdownCtx },
-	}
+	srv := newHTTPServer(port, requestSizeLimitMiddleware(handler), shutdownCtx)
 
 	// Track startup time for heartbeat — set BEFORE the goroutines launch
 	// so heartbeatStatus() never races the write.
@@ -380,6 +368,26 @@ func hashPasswordCmd() {
 		os.Exit(1)
 	}
 	fmt.Println(hash)
+}
+
+// newHTTPServer builds the production server. Extracted from main() so the
+// BaseContext wiring — the tarpit-bail-on-shutdown fix — is testable
+// directly, instead of through a hand-built server that proves nothing
+// about this code path.
+func newHTTPServer(port string, handler http.Handler, shutdownCtx context.Context) *http.Server {
+	return &http.Server{
+		Addr:         ":" + port,
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		// Pi Zero W has limited file descriptors; limit idle conns
+		MaxHeaderBytes: 1 << 16, // 64KB
+		// BaseContext roots every request context in the shutdown signal,
+		// so in-flight tarpit connections bail on SIGTERM instead of
+		// stretching Shutdown to its deadline.
+		BaseContext: func(net.Listener) context.Context { return shutdownCtx },
+	}
 }
 
 // stripPasswordLineEnding removes the trailing newline (and optional CR)

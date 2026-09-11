@@ -184,13 +184,15 @@ Or open [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/m
 
 ### CORS
 
-The Go server only sends CORS headers for same-origin requests (the SPA is
-served from the same origin as the API in normal deployments). Cross-origin
-access requires an exact match on the `TRUSTED_ORIGIN` env var — set it to
-your full origin (e.g. `https://<hostname>.<tailnet>.ts.net`) only if you
-separately host the frontend on a different origin. By default NO `*.ts.net`
-origin is trusted: any Tailscale user can mint a `.ts.net` hostname, so a
-wildcard would allow credentialed cross-origin requests from strangers.
+The Go server withholds CORS headers unless the request's Origin passes
+`trustedOrigin()` (localhost/LAN origins, or an exact match on the
+`TRUSTED_ORIGIN` env var). The SPA is served from the same origin as the API
+in normal deployments, so no CORS headers are needed. Cross-origin access
+requires setting `TRUSTED_ORIGIN` to the full origin (e.g.
+`https://<hostname>.<tailnet>.ts.net`) only if you separately host the
+frontend on a different origin. By default NO `*.ts.net` origin is trusted:
+any Tailscale user can mint a `.ts.net` hostname, so a wildcard would allow
+credentialed cross-origin requests from strangers.
 
 ---
 
@@ -231,7 +233,13 @@ sudo systemctl status freezer-app
 ## Database
 
 ### Location
-`/home/admin/freezer-app/data/freezer.db`
+
+`/home/admin/freezer-app/data/freezer.db` when `DB_PATH` is set in `.env`
+(recommended — pin it explicitly). When `DB_PATH` is unset, the server
+defaults to `data/freezer.db` next to the **binary**
+(`gobackend/data/freezer.db`), NOT the working directory — the server logs
+the resolved path at boot. Set `DB_PATH` in `.env` to keep backups and
+restores pointing at one file.
 
 ### Backup
 

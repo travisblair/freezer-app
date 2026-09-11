@@ -19,6 +19,9 @@ The first time you run, there are no users yet. Generate password hashes and ins
 ./gobackend/freezer-server --hash-password
 
 # Insert users
+# The database lives at data/freezer.db (repo root) when DB_PATH is set in
+# .env; without it, the server defaults to gobackend/data/freezer.db (next
+# to the binary) and logs the path at boot. Pin DB_PATH in .env to be sure.
 sqlite3 data/freezer.db "INSERT INTO users (email, password_hash) VALUES ('you@email.com', 'PASTE_HASH_HERE');"
 # Add additional users the same way:
 # sqlite3 data/freezer.db "INSERT INTO users (email, password_hash) VALUES ('other@email.com', 'PASTE_HASH_HERE');"

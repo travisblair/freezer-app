@@ -30,7 +30,7 @@ func handleLookupBarcode(db *gorm.DB) http.HandlerFunc {
 		var item Item
 		err := db.
 			Preload("Barcodes").
-			Preload("Shelves").
+			Preload("Shelves", orderedShelves()).
 			Joins("JOIN item_barcodes ON item_barcodes.item_id = items.id").
 			Where("item_barcodes.barcode = ?", barcode).
 			First(&item).Error
@@ -65,7 +65,7 @@ func handleListItems(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		tx := db.Preload("Barcodes").Preload("Shelves").Order("name ASC")
+		tx := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).Order("name ASC")
 
 		if search != "" {
 			tx = tx.Where("name LIKE ? ESCAPE '\\'", "%"+escapeLike(search)+"%")
@@ -112,7 +112,7 @@ func handleSearchItems(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		var items []Item
-		if err := db.Preload("Barcodes").Preload("Shelves").
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).
 			Where("name LIKE ? ESCAPE '\\'", "%"+escapeLike(q)+"%").
 			Order("name ASC").
 			Limit(10).
@@ -317,7 +317,7 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 			var existing ItemBarcode
 			if err := db.Where("barcode = ?", bc).First(&existing).Error; err == nil {
 				var parent Item
-				if err := db.Preload("Barcodes").Preload("Shelves").First(&parent, existing.ItemID).Error; err != nil {
+				if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).First(&parent, existing.ItemID).Error; err != nil {
 					GetLogger().Error("duplicate barcode %s references missing item %d", bc, existing.ItemID)
 					errorJSON(w, http.StatusInternalServerError, "internal server error")
 					return
@@ -373,7 +373,6 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 			return nil
 		})
 		if err != nil {
-			GetLogger().Error("handleCreate transaction failed: %v", err)
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
 				return
@@ -382,6 +381,7 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 				errorJSON(w, http.StatusConflict, "barcode already exists")
 				return
 			}
+			GetLogger().Error("handleCreate transaction failed: %v", err)
 			errorJSON(w, http.StatusInternalServerError, "failed to create item")
 			return
 		}
@@ -412,38 +412,37 @@ func handleLinkBarcode(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Same TOCTOU class as scan/create/createShelf: the item-existence
+		// check, the dup check, and the INSERT must share one transaction,
+		// or a concurrent DELETE /api/item/hard/{id} between check and
+		// create leaves an ItemBarcode pointing at a missing item.
 		var item Item
-		if err := db.First(&item, body.ItemID).Error; err != nil {
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.First(&item, body.ItemID).Error; err != nil {
+				return err
+			}
+			var dup ItemBarcode
+			if err := tx.Where("barcode = ?", barcode).First(&dup).Error; err == nil {
+				return gorm.ErrDuplicatedKey
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			return tx.Create(&ItemBarcode{ItemID: item.ID, Barcode: barcode}).Error
+		})
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				errorJSON(w, http.StatusNotFound, "item not found")
-			} else {
-				GetLogger().Error("linkBarcode item lookup failed: %v", err)
-				errorJSON(w, http.StatusInternalServerError, "internal server error")
+				return
 			}
-			return
-		}
-
-		var dup ItemBarcode
-		if err := db.Where("barcode = ?", barcode).First(&dup).Error; err == nil {
-			errorJSON(w, http.StatusConflict, "Barcode already linked to another item")
-			return
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			GetLogger().Error("linkBarcode dup-check failed: %v", err)
-			errorJSON(w, http.StatusInternalServerError, "internal server error")
-			return
-		}
-
-		result := db.Create(&ItemBarcode{ItemID: item.ID, Barcode: barcode})
-		if result.Error != nil {
-			if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
 				errorJSON(w, http.StatusConflict, "Barcode already linked to another item")
 				return
 			}
-			GetLogger().Error("linkBarcode create failed: %v", result.Error)
+			GetLogger().Error("linkBarcode transaction failed: %v", err)
 			errorJSON(w, http.StatusInternalServerError, "failed to link barcode")
 			return
 		}
-		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID).Error; err != nil {
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).First(&item, item.ID).Error; err != nil {
 			GetLogger().Error("failed to reload item %d after linkBarcode: %v", item.ID, err)
 			errorJSON(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -501,7 +500,7 @@ func handleUpdateItem(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusInternalServerError, "failed to update item")
 			return
 		}
-		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, id).Error; err != nil {
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).First(&item, id).Error; err != nil {
 			GetLogger().Error("failed to reload item %d after update: %v", id, err)
 			item.Name = name // at least return the name we just set
 		}
@@ -691,11 +690,11 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 			return tx.Create(&shelf).Error
 		})
 		if err != nil {
-			GetLogger().Error("createShelf transaction failed: %v", err)
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				errorJSON(w, http.StatusBadRequest, "list does not exist")
 				return
 			}
+			GetLogger().Error("createShelf transaction failed: %v", err)
 			errorJSON(w, http.StatusInternalServerError, "failed to create shelf")
 			return
 		}
@@ -1003,7 +1002,7 @@ func handleMoveItem(db *gorm.DB) http.HandlerFunc {
 func handleExport(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var items []Item
-		if err := db.Preload("Barcodes").Preload("Shelves").Order("id ASC").Find(&items).Error; err != nil {
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).Order("id ASC").Find(&items).Error; err != nil {
 			GetLogger().Error("export query failed: %v", err)
 			errorJSON(w, http.StatusInternalServerError, "internal server error")
 			return
