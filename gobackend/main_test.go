@@ -1468,6 +1468,102 @@ func TestDeleteListCascades(t *testing.T) {
 	}
 }
 
+func TestDeleteListOrphanSweepIsScoped(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// List to delete, with an item on its only shelf.
+	resp := doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{
+		"name": "ToDelete",
+	}, true)
+	var doomedList List
+	decodeJSON(t, resp, &doomedList)
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Doomed Shelf", "listId": doomedList.ID,
+	}, true)
+	var doomedShelf Shelf
+	decodeJSON(t, resp, &doomedShelf)
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Doomed", "quantity": 3, "shelfId": doomedShelf.ID,
+	}, true)
+	var doomed Item
+	decodeJSON(t, resp, &doomed)
+
+	// A second list holding an item that goes out of stock: zeroing its count
+	// deletes its only ItemShelf row, so it becomes a zero-row item by design.
+	resp = doJSON(t, ts, "POST", "/api/lists", map[string]interface{}{
+		"name": "Keep",
+	}, true)
+	var keepList List
+	decodeJSON(t, resp, &keepList)
+	resp = doJSON(t, ts, "POST", "/api/shelves", map[string]interface{}{
+		"name": "Keep Shelf", "listId": keepList.ID,
+	}, true)
+	var keepShelf Shelf
+	decodeJSON(t, resp, &keepShelf)
+	resp = doJSON(t, ts, "POST", "/api/item/create", map[string]interface{}{
+		"name": "Survivor", "quantity": 2, "shelfId": keepShelf.ID, "barcode": "SCOPE001",
+	}, true)
+	var survivor Item
+	decodeJSON(t, resp, &survivor)
+
+	// Locate the survivor's ItemShelf row, then zero it.
+	var survivorShelfID uint
+	req, _ := http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var items []Item
+	decodeJSON(t, resp, &items)
+	for _, i := range items {
+		if i.ID == survivor.ID && len(i.Shelves) > 0 {
+			survivorShelfID = i.Shelves[0].ID
+		}
+	}
+	if survivorShelfID == 0 {
+		t.Fatal("survivor item-shelf row not found")
+	}
+	resp = doJSON(t, ts, "PATCH", fmt.Sprintf("/api/item-shelf/%d", survivorShelfID), map[string]interface{}{
+		"count": 0,
+	}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("zero count: expected 200, got %d", resp.StatusCode)
+	}
+
+	// Deleting the OTHER list must not sweep the out-of-stock survivor.
+	resp = doJSON(t, ts, "DELETE", fmt.Sprintf("/api/lists/%d", doomedList.ID), nil, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Survivor still resolvable by barcode (item + barcode survived).
+	req, _ = http.NewRequest("GET", ts.URL+"/api/item/SCOPE001", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	var lookup map[string]interface{}
+	decodeJSON(t, resp, &lookup)
+	if found, _ := lookup["found"].(bool); !found {
+		t.Fatal("survivor item destroyed by unrelated list delete")
+	}
+
+	// Doomed is gone; Survivor remains.
+	req, _ = http.NewRequest("GET", ts.URL+"/api/items?showOutOfStock=true", nil)
+	req.AddCookie(authCookie())
+	resp, _ = http.DefaultClient.Do(req)
+	decodeJSON(t, resp, &items)
+	seenSurvivor := false
+	for _, i := range items {
+		if i.ID == doomed.ID {
+			t.Fatal("doomed item should be deleted")
+		}
+		if i.ID == survivor.ID {
+			seenSurvivor = true
+		}
+	}
+	if !seenSurvivor {
+		t.Fatal("survivor item missing after unrelated list delete")
+	}
+}
+
 func TestListScoping(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()

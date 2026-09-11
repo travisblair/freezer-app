@@ -1154,16 +1154,27 @@ func handleDeleteList(db *gorm.DB) http.HandlerFunc {
 			}
 
 			if len(shelfIDs) > 0 {
+				// Capture the items that have rows on this list's shelves BEFORE
+				// deleting them. The orphan sweep below must only consider these
+				// candidates — a global "no rows left" query would also destroy
+				// out-of-stock items on OTHER lists (zero ItemShelf rows is their
+				// normal state once a count hits 0).
+				var candidateIDs []uint
+				if err := tx.Model(&ItemShelf{}).Where("shelf_id IN ?", shelfIDs).Distinct().Pluck("item_id", &candidateIDs).Error; err != nil {
+					return err
+				}
+
 				// Delete ItemShelf rows for this list's shelves first
 				if err := tx.Where("shelf_id IN ?", shelfIDs).Delete(&ItemShelf{}).Error; err != nil {
 					return err
 				}
 
-				// Find items that now have no remaining ItemShelf rows.
-				// These are items that only existed on this list's shelves.
-				// Items that also exist on shelves in other lists survive.
+				// Find items among the candidates that now have no remaining
+				// ItemShelf rows. These are items that only existed on this
+				// list's shelves. Items that also exist on shelves in other
+				// lists survive.
 				var orphaned []Item
-				if err := tx.Where("id NOT IN (SELECT item_id FROM item_shelves)").Find(&orphaned).Error; err != nil {
+				if err := tx.Where("id IN ? AND id NOT IN (SELECT item_id FROM item_shelves)", candidateIDs).Find(&orphaned).Error; err != nil {
 					return err
 				}
 
