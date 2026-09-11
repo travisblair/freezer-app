@@ -80,7 +80,17 @@ func globalRateLimit(next http.Handler) http.Handler {
 // prevent spoofing of rate-limit and auth-delay bypasses.
 func clientIP(r *http.Request) string {
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" && isTrustedProxy(r) {
-		return strings.TrimSpace(strings.Split(fwd, ",")[0])
+		// The trusted proxy APPENDS the real client IP, so the LAST
+		// element is the one we trust — the leftmost is client-supplied
+		// and attacker-controlled (rotating it defeated rate limiting).
+		// Skip empty elements: a malformed header like ",1.2.3.4" used
+		// to yield "" as the bucket key and bypass throttling entirely.
+		parts := strings.Split(fwd, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			if ip := strings.TrimSpace(parts[i]); ip != "" {
+				return ip
+			}
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -157,12 +167,17 @@ func serveTarpit(w http.ResponseWriter, r *http.Request) {
 	// Time removes the deadline for this response only.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	// Claim a slot.  If none available, return without writing anything —
-	// the scanner's connection hangs until their timeout fires.
+	// Claim a slot. If none are free, hang the connection WITHOUT
+	// consuming a slot — a bare return would let net/http complete the
+	// response as an instant empty 200, which scanners read as "path
+	// exists". Hanging keeps the documented degradation policy: the
+	// scanner waits until ITS timeout fires. Request contexts are
+	// canceled on client disconnect and (via BaseContext) on shutdown.
 	select {
 	case tarpitSlots <- struct{}{}:
 		defer func() { <-tarpitSlots }()
 	default:
+		<-r.Context().Done()
 		return
 	}
 
@@ -340,12 +355,11 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Tarpit known scanner paths before anything else
 			if scannerProbes[r.URL.Path] {
-				xff := r.Header.Get("X-Forwarded-For")
-				if xff == "" {
-					xff = r.RemoteAddr
-				}
+				// clientIP() applies the trusted-proxy gate — the raw
+				// X-Forwarded-For header is attacker-controlled, so logging
+				// it as "real-ip" poisoned forensics.
 				GetLogger().Info("🪤 TARPIT | %s | real-ip=%s | UA=%s | Accept-Language=%s",
-					r.URL.Path, xff, r.UserAgent(), r.Header.Get("Accept-Language"))
+					r.URL.Path, clientIP(r), r.UserAgent(), r.Header.Get("Accept-Language"))
 				serveTarpit(w, r)
 				return
 			}

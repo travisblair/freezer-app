@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -323,5 +327,177 @@ func TestBulkDeleteRemovesZeroRows(t *testing.T) {
 	shelves, _ := item["shelves"].([]interface{})
 	if len(shelves) != 0 {
 		t.Fatalf("expected no shelf rows after bulk delete, got %d: %v", len(shelves), shelves)
+	}
+}
+
+// ── Sept 2026 audit hardening: clientIP, tarpit, BaseContext, DB path ──
+
+func TestClientIPTrustsProxyRightmost(t *testing.T) {
+	// A trusted proxy APPENDS the real client IP; the leftmost element is
+	// client-supplied and attacker-controlled.
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.5")
+	if ip := clientIP(req); ip != "203.0.113.5" {
+		t.Fatalf("expected rightmost XFF element, got %s", ip)
+	}
+}
+
+func TestClientIPTrustedProxySkipsEmptyElements(t *testing.T) {
+	// A malformed header like ",1.2.3.4" used to yield "" as the bucket
+	// key and bypass rate limiting entirely.
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", ", 203.0.113.5")
+	if ip := clientIP(req); ip != "203.0.113.5" {
+		t.Fatalf("expected non-empty rightmost element, got %q", ip)
+	}
+}
+
+func TestClientIPTrustedProxyAllEmptyFallsBack(t *testing.T) {
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", ", , ")
+	if ip := clientIP(req); ip != "127.0.0.1" {
+		t.Fatalf("expected RemoteAddr fallback for all-empty XFF, got %q", ip)
+	}
+}
+
+func TestStripPasswordLineEnding(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{" secret \n", " secret "}, // spaces preserved byte-for-byte
+		{"pw\r\n", "pw"},
+		{"plain", "plain"},
+		{"\n", ""},
+	}
+	for _, c := range cases {
+		if got := stripPasswordLineEnding(c.in); got != c.want {
+			t.Fatalf("stripPasswordLineEnding(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDefaultDBPathNextToBinary(t *testing.T) {
+	execPath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(filepath.Dir(execPath), "data", "freezer.db")
+	if got := defaultDBPath(); got != want {
+		t.Fatalf("defaultDBPath() = %q, want %q", got, want)
+	}
+	// The old bug: the default resolved from the working directory, so a
+	// process started from anywhere else silently opened a fresh empty DB.
+	cwd, _ := os.Getwd()
+	if got := defaultDBPath(); got == filepath.Join(cwd, "data", "freezer.db") {
+		t.Fatalf("defaultDBPath() still resolves from cwd: %q", got)
+	}
+}
+
+func TestServerBaseContextCancelsRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	returned := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hang", func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(returned)
+	})
+
+	srv := &http.Server{
+		Handler:     mux,
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + "/hang")
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond) // let the request reach the handler
+	cancel()
+
+	select {
+	case <-returned:
+		// The request context observed the cancellation via BaseContext —
+		// this is what lets in-flight tarpit connections bail on shutdown.
+	case <-time.After(3 * time.Second):
+		t.Fatal("request context was not canceled via BaseContext")
+	}
+}
+
+func TestTarpitSlotExhaustionHangs(t *testing.T) {
+	if _, err := os.Stat("../frontend/dist"); err != nil {
+		t.Skip("frontend dist not built — tarpit routes unregistered")
+	}
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Fill all 5 tarpit slots.
+	var fillers []*http.Response
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(ts.URL + "/.env")
+		if err != nil {
+			t.Fatalf("filler %d: %v", i, err)
+		}
+		fillers = append(fillers, resp)
+	}
+	time.Sleep(500 * time.Millisecond) // let all five claim their slots
+
+	// The 6th probe must hang, not complete as an instant empty 200 (which
+	// scanners read as "path exists").
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get(ts.URL + "/.env")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("6th tarpit request completed with status %d; expected it to hang", resp.StatusCode)
+	}
+
+	for _, r := range fillers {
+		r.Body.Close()
+	}
+}
+
+func TestOrderedShelvesPreloadContract(t *testing.T) {
+	tmp := t.TempDir()
+	prev := os.Getenv("DB_PATH")
+	os.Setenv("DB_PATH", filepath.Join(tmp, "freezer.db"))
+	defer os.Setenv("DB_PATH", prev)
+
+	db := OpenDB()
+	item := Item{Name: "Multi-shelf"}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondShelf := Shelf{Name: "Second", ListID: 1}
+	if err := db.Create(&secondShelf).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Explicit out-of-order IDs: 10 inserted before 9.
+	if err := db.Create(&ItemShelf{ID: 10, ItemID: item.ID, ShelfID: 1, Count: 5}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&ItemShelf{ID: 9, ItemID: item.ID, ShelfID: secondShelf.ID, Count: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// orderedShelves() pins the scan-fallback contract: Shelves[0] is the
+	// lowest row id, deterministically. Without ORDER BY the order is
+	// whatever the engine happens to return.
+	var got Item
+	if err := db.Preload("Shelves", orderedShelves()).First(&got, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Shelves) != 2 || got.Shelves[0].ID != 9 || got.Shelves[1].ID != 10 {
+		t.Fatalf("shelves not ordered by id ASC: %+v", got.Shelves)
 	}
 }

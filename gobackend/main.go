@@ -79,6 +79,10 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 		// Pi Zero W has limited file descriptors; limit idle conns
 		MaxHeaderBytes: 1 << 16, // 64KB
+		// BaseContext roots every request context in the shutdown signal,
+		// so in-flight tarpit connections bail on SIGTERM instead of
+		// stretching Shutdown to its deadline.
+		BaseContext: func(net.Listener) context.Context { return shutdownCtx },
 	}
 
 	// Track startup time for heartbeat — set BEFORE the goroutines launch
@@ -158,9 +162,9 @@ func main() {
 	notifyWatchdog("STOPPING=1")
 
 	// Stop accepting new requests, drain in-flight with a deadline
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := srv.Shutdown(drainCtx); err != nil {
 		logger.Error("HTTP server shutdown error: %v", err)
 	}
 
@@ -360,7 +364,11 @@ func hashPasswordCmd() {
 		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
 		os.Exit(1)
 	}
-	password = strings.TrimSpace(password)
+	// Strip ONLY the line ending. TrimSpace used to also eat intentional
+	// leading/trailing whitespace, so a password hashed at seed time
+	// could never match the login form (which hashes exactly what it
+	// receives).
+	password = stripPasswordLineEnding(password)
 	if password == "" {
 		fmt.Fprintln(os.Stderr, "Password cannot be empty.")
 		os.Exit(1)
@@ -372,4 +380,13 @@ func hashPasswordCmd() {
 		os.Exit(1)
 	}
 	fmt.Println(hash)
+}
+
+// stripPasswordLineEnding removes the trailing newline (and optional CR)
+// without trimming any other whitespace — hash-time and login-time must
+// treat a password byte-for-byte identically.
+func stripPasswordLineEnding(s string) string {
+	s = strings.TrimSuffix(s, "\n")
+	s = strings.TrimSuffix(s, "\r")
+	return s
 }

@@ -16,15 +16,34 @@ const (
 	DefaultShelfID = 1 // Seeded Shelf 1 in list 1 — do not delete
 )
 
+// defaultDBPath resolves the DB location when DB_PATH is unset: the data
+// directory next to the BINARY. The old os.Getwd() default silently
+// opened a fresh empty DB whenever the process started from a different
+// directory. Deployments should still set DB_PATH explicitly.
+func defaultDBPath() string {
+	execPath, err := os.Executable()
+	if err != nil {
+		return filepath.Join("data", "freezer.db")
+	}
+	return filepath.Join(filepath.Dir(execPath), "data", "freezer.db")
+}
+
+// orderedShelves is the standard Shelves preload: deterministic id order.
+// Without ORDER BY, Shelves[0] (the scan fallback target) was whatever
+// row SQLite happened to return first.
+func orderedShelves() func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB { return db.Order("id ASC") }
+}
+
 // OpenDB initializes the SQLite database with GORM.
 // Uses pure-Go SQLite (no CGO) for easy ARM64 cross-compilation.
-// The DB_PATH is relative to the binary unless absolute.
+// DB_PATH, when set, is used as given (relative paths resolve from the
+// working directory). When unset, the default is data/freezer.db next to
+// the binary.
 func OpenDB() *gorm.DB {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		// Default: data directory next to binary, mirroring Pi deployment layout.
-		execDir, _ := os.Getwd()
-		dbPath = filepath.Join(execDir, "data", "freezer.db")
+		dbPath = defaultDBPath()
 	}
 
 	// Ensure the parent directory exists so sqlite can create the file.

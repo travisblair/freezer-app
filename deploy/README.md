@@ -184,7 +184,13 @@ Or open [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/m
 
 ### CORS
 
-The Go server allows CORS from `*.ts.net` domains (already configured in `main.go`). No additional setup needed.
+The Go server only sends CORS headers for same-origin requests (the SPA is
+served from the same origin as the API in normal deployments). Cross-origin
+access requires an exact match on the `TRUSTED_ORIGIN` env var — set it to
+your full origin (e.g. `https://<hostname>.<tailnet>.ts.net`) only if you
+separately host the frontend on a different origin. By default NO `*.ts.net`
+origin is trusted: any Tailscale user can mint a `.ts.net` hostname, so a
+wildcard would allow credentialed cross-origin requests from strangers.
 
 ---
 

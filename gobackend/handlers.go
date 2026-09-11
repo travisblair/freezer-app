@@ -157,7 +157,7 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		var item Item
 		err := db.
 			Preload("Barcodes").
-			Preload("Shelves").
+			Preload("Shelves", orderedShelves()).
 			Joins("JOIN item_barcodes ON item_barcodes.item_id = items.id").
 			Where("item_barcodes.barcode = ?", barcode).
 			First(&item).Error
@@ -192,20 +192,13 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusBadRequest, "shelf is required")
 			return
 		}
-		var targetShelf Shelf
-		if err := db.First(&targetShelf, targetShelfID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
-			} else {
-				GetLogger().Error("scan target shelf lookup failed: %v", err)
-				errorJSON(w, http.StatusInternalServerError, "internal server error")
-			}
-			return
-		}
-
 		// Find or create the ItemShelf row, then atomically update count — all
 		// inside a single transaction to prevent TOCTOU between find/create
-		// and the count mutation.
+		// and the count mutation. The target-shelf existence check is inside
+		// the transaction too: a concurrent DELETE /api/shelf/{id} between a
+		// separate check and the write used to create rows on a shelf that no
+		// longer existed.
+		var targetShelf Shelf
 		var itemShelf ItemShelf
 		delta := body.Quantity
 		if body.Mode == "decrement" {
@@ -213,6 +206,9 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		}
 
 		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.First(&targetShelf, targetShelfID).Error; err != nil {
+				return err
+			}
 			firstErr := tx.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error
 			if errors.Is(firstErr, gorm.ErrRecordNotFound) {
 				if body.Mode == "decrement" {
@@ -247,6 +243,10 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			}
 			return nil
 		}); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+				return
+			}
 			if errors.Is(err, ErrInsufficientCount) {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 				return
@@ -264,7 +264,7 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			auditDetails(map[string]any{"shelf": targetShelf.Name, "mode": body.Mode, "quantity": body.Quantity}))
 
 		// Reload item with updated shelves
-		if err := db.Preload("Barcodes").Preload("Shelves").First(&item, item.ID).Error; err != nil {
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).First(&item, item.ID).Error; err != nil {
 			GetLogger().Error("failed to reload item %d after scan: %v", item.ID, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
@@ -343,21 +343,16 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 			shelfID = 1
 		}
 
-		// Validate shelf exists
+		// Validate shelf exists INSIDE the transaction: a concurrent
+		// DELETE /api/shelf/{id} between check and write used to create
+		// items on a shelf that no longer existed.
 		var shelf Shelf
-		if err := db.First(&shelf, shelfID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
-			} else {
-				GetLogger().Error("create shelf lookup failed: %v", err)
-				errorJSON(w, http.StatusInternalServerError, "internal server error")
-			}
-			return
-		}
-
 		item := Item{Name: name}
 
 		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.First(&shelf, shelfID).Error; err != nil {
+				return err
+			}
 			if err := tx.Create(&item).Error; err != nil {
 				return err
 			}
@@ -379,6 +374,10 @@ func handleCreate(db *gorm.DB) http.HandlerFunc {
 		})
 		if err != nil {
 			GetLogger().Error("handleCreate transaction failed: %v", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+				return
+			}
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
 				errorJSON(w, http.StatusConflict, "barcode already exists")
 				return
@@ -680,22 +679,23 @@ func handleCreateShelf(db *gorm.DB) http.HandlerFunc {
 		if listID == 0 {
 			listID = 1
 		}
-		// Validate the list exists
+		// Validate the list exists and create the shelf in ONE transaction:
+		// a concurrent DELETE /api/lists/{id} between check and write used
+		// to create shelves on a list that no longer existed.
 		var list List
-		if err := db.First(&list, listID).Error; err != nil {
+		shelf := Shelf{Name: name, ListID: listID}
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.First(&list, listID).Error; err != nil {
+				return err
+			}
+			return tx.Create(&shelf).Error
+		})
+		if err != nil {
+			GetLogger().Error("createShelf transaction failed: %v", err)
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				errorJSON(w, http.StatusBadRequest, "list does not exist")
-			} else {
-				GetLogger().Error("createShelf list lookup failed: %v", err)
-				errorJSON(w, http.StatusInternalServerError, "internal server error")
+				return
 			}
-			return
-		}
-
-		shelf := Shelf{Name: name, ListID: listID}
-		result := db.Create(&shelf)
-		if result.Error != nil {
-			GetLogger().Error("createShelf failed: %v", result.Error)
 			errorJSON(w, http.StatusInternalServerError, "failed to create shelf")
 			return
 		}
