@@ -73,21 +73,31 @@ export function useItemSearch(): ItemSearchControls {
     if (debounceTimer) clearTimeout(debounceTimer);
   }
 
+  // Monotonic request id for the stale-response guard: overlapping loads
+  // (fast search keystrokes, itemsVersion bumps) used to let the LAST
+  // response to ARRIVE win — a slow older request could clobber newer
+  // results and flip loading off while a newer request was still in
+  // flight.
+  let loadSeq = 0;
+
   async function loadItems() {
+    const seq = ++loadSeq;
     setLoading(true);
     try {
       const [itemData, _] = await Promise.all([
         api.getItems(showOutOfStock(), debouncedSearch()),
         Promise.all([loadShelves(), loadLists(), loadAllShelves()]),
       ]);
+      if (seq !== loadSeq) return; // superseded by a newer request
       setItems(itemData);
     } catch (err) {
+      if (seq !== loadSeq) return;
       // A 500 here used to leave a stale/empty table with zero feedback
       // (the offline banner only catches network rejections). Surface it.
       if (import.meta.env.DEV) console.error("Failed to load items", err);
       flashStatus("Failed to load items");
     }
-    setLoading(false);
+    if (seq === loadSeq) setLoading(false);
   }
 
   // Reload whenever filters change or itemsVersion is bumped

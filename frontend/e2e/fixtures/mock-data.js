@@ -101,6 +101,18 @@ export async function setupApiMocks(page, initialItems = null) {
     });
   });
 
+  // Notifications poll at boot (after the auth gate clears). Without this
+  // mock the request falls through the vite proxy to a real backend,
+  // whose 401 {"error":"Unauthorized"} fires freezer:auth-required and
+  // re-locks the gate mid-test (AuthForm takes over the page).
+  await page.route("**/api/notifications**", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
   await page.route("**/api/auth", (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     const body = route.request().postDataJSON();

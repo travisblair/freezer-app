@@ -144,11 +144,11 @@ export function useScanner(): ScannerControls {
         setPrompt({ barcode: decodedText });
       }
     } catch (err: unknown) {
-      if (err instanceof Error && err.message !== "STALE_RESPONSE") {
-        setFeedback({ type: "error" });
-        clearFeedbackLater();
-        if (import.meta.env.DEV) console.error(err);
-      }
+      // (The old "STALE_RESPONSE" branch here was dead — nothing ever
+      // throws that sentinel. Every rejection surfaces feedback.)
+      setFeedback({ type: "error" });
+      clearFeedbackLater();
+      if (import.meta.env.DEV) console.error(err);
       doneProcessing();
     }
   });
@@ -183,8 +183,14 @@ export function useScanner(): ScannerControls {
       setExpanded(false);
     } catch (err: unknown) {
       const error = err as { status?: number; item?: Item };
-      if (error.status === 409) {
-        setDuplicateOffer({ barcode: bc || "", existing: error.item! });
+      if (error.status === 409 && error.item) {
+        setDuplicateOffer({ barcode: bc || "", existing: error.item });
+      } else if (error.status === 409) {
+        // UNIQUE-constraint race fallback: the backend returns 409 with
+        // NO item. Rendering DuplicateOffer with existing=undefined used
+        // to throw mid-render — without an item there's nothing to offer.
+        setFeedback({ type: "error" });
+        clearFeedbackLater();
       } else {
         setFeedback({ type: "error" });
         clearFeedbackLater();

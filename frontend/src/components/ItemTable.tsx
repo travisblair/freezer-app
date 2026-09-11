@@ -1,4 +1,4 @@
-import { For, Show, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { Item, Shelf } from "../types";
 import { totalCount, createPerKeyDebouncer } from "../helpers";
 import { api } from "../api";
@@ -23,6 +23,17 @@ export default function ItemTable() {
 
   const [selShelf, setSelShelf] = createSignal<number | null>(null);
   const [collapsed, setCollapsed] = createSignal<Set<number>>(new Set());
+
+  // Stale-filter guard: deleting the filtered shelf, or switching to a
+  // list that has no shelf with that id, used to leave vs() empty and the
+  // whole inventory blank with no hint. Reset the filter when its shelf
+  // vanishes.
+  createEffect(() => {
+    const sel = selShelf();
+    if (sel !== null && !shelves().some((s) => s.id === sel)) {
+      setSelShelf(null);
+    }
+  });
   const [newName, setNewName] = createSignal("");
   const [renameId, setRenameId] = createSignal<number | null>(null);
   const [moveState, setMoveState] = createSignal<{ item: Item; shelfId: number; count: number } | null>(null);

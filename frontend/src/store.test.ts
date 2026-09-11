@@ -21,7 +21,7 @@ describe("store", () => {
       expect(currentListName()).toBe("Freezer");
     });
 
-    it.skip('returns name matching currentListId when multiple lists', () => {
+    it('returns name matching currentListId when multiple lists', () => {
       setLists([{ id: 1, name: "Freezer" }, { id: 2, name: "Pantry" }]);
       setCurrentListId(2);
       expect(currentListName()).toBe("Pantry");

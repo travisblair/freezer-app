@@ -15,11 +15,17 @@ export interface CameraControls {
  */
 export function useCamera(onScan: ((decodedText: string) => void) | null): CameraControls {
   const [scanning, setScanning] = createSignal(false);
+  const [starting, setStarting] = createSignal(false);
   const [cameraError, setCameraError] = createSignal("");
 
   let scanner: Html5Qrcode | null = null;
 
   async function startCamera() {
+    // In-flight guard: scanning() only flips true AFTER start() resolves,
+    // so a double-click during the permission prompt used to spawn a
+    // second Html5Qrcode instance and orphan the first (un-stoppable).
+    if (scanning() || starting()) return;
+    setStarting(true);
     setCameraError("");
     try {
       scanner = new Html5Qrcode("reader");
@@ -43,6 +49,8 @@ export function useCamera(onScan: ((decodedText: string) => void) | null): Camer
         "Camera access denied or unavailable. Please grant camera permission or use manual entry.",
       );
       if (import.meta.env.DEV) console.error(err);
+    } finally {
+      setStarting(false);
     }
   }
 

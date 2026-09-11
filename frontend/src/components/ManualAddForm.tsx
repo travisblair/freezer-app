@@ -39,8 +39,8 @@ export default function ManualAddForm(props: { listId: number }) {
       setQuantity(1);
     } catch (err: unknown) {
       const apiErr = err as { status?: number; item?: Item; error?: string };
-      if (apiErr.status === 409) {
-        setDuplicateOffer({ barcode: barcode().trim(), existing: apiErr.item! });
+      if (apiErr.status === 409 && apiErr.item) {
+        setDuplicateOffer({ barcode: barcode().trim(), existing: apiErr.item });
       } else {
         setMessage({ type: "error", text: apiErr.error || "Failed to add item" });
       }

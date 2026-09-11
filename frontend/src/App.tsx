@@ -20,13 +20,30 @@ export default function App() {
   window.addEventListener("freezer:auth-required", onAuthRequired);
 
   onMount(async () => {
-    try {
-      const res = await fetch("/api/auth/check", { credentials: "same-origin" });
-      const data = await res.json();
-      if (data.authenticated) {
-        setNeedsAuth(false);
+    // Bounded boot retry: the old message promised a retry that never
+    // existed (and the raw fetch bypassed the offline tracker). Two
+    // retries with backoff, then an honest failure status.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch("/api/auth/check", { credentials: "same-origin" });
+        const data = await res.json();
+        if (data.authenticated) {
+          setNeedsAuth(false);
+          // Initial notification fetch must run AFTER the gate clears —
+          // fetchNotifications() skips itself while needsAuth() is true,
+          // and the old mount ordering raced it every load (badge stayed
+          // 0 until the first 60s tick).
+          fetchNotifications();
+        }
+        return;
+      } catch (_) {
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        } else {
+          flashStatus("Connection failed — check your connection and reload");
+        }
       }
-    } catch (_) { flashStatus("Connection failed — retrying"); }
+    }
   });
 
   onCleanup(() => {
@@ -37,6 +54,7 @@ export default function App() {
   const [renameOpen, setRenameOpen] = createSignal(false);
   const [newListOpen, setNewListOpen] = createSignal(false);
   const [deleteListId, setDeleteListId] = createSignal<number | null>(null);
+  const [deletingList, setDeletingList] = createSignal(false);
 
   // Notification state
   const [notifOpen, setNotifOpen] = createSignal(false);
@@ -49,14 +67,19 @@ export default function App() {
 
   async function doDeleteList() {
     const id = deleteListId();
-    if (!id) return;
+    if (!id || deletingList()) return;
+    // Dismiss immediately: the confirm button used to stay live through
+    // the awaits, and a double-click fired DELETE twice (the second 404'd
+    // and flashed a misleading failure).
+    setDeleteListId(null);
+    setDeletingList(true);
     try {
       await api.deleteList(id);
       setCurrentListId(1);
       const fresh = await api.getLists();
       setLists(fresh);
     } catch (_) { flashStatus("Failed to delete list"); }
-    setDeleteListId(null);
+    setDeletingList(false);
   }
 
   // ── Notifications ──────────────────────────────────────────────────
@@ -77,10 +100,11 @@ export default function App() {
     setNotifOpen(true);
   }
 
-  // Poll for new notifications every 60 seconds
+  // Poll for new notifications every 60 seconds. The INITIAL fetch runs
+  // in the auth onMount after the gate clears — calling it here raced
+  // needsAuth() and self-skipped every load.
   onMount(() => {
     const interval = setInterval(fetchNotifications, 60000);
-    fetchNotifications(); // initial fetch
     onCleanup(() => clearInterval(interval));
   });
 

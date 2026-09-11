@@ -18,6 +18,10 @@ export default function LinkBarcode(props: Props) {
   const [linking, setLinking] = createSignal(false);
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  // Monotonic request id: a fetch launched by the debounce can still be
+  // in flight when the user clears the box or types a new query — its
+  // response used to repopulate results under an empty/older search.
+  let searchSeq = 0;
 
   function handleSearchInput(e: Event) {
     const target = e.target as HTMLInputElement;
@@ -25,16 +29,19 @@ export default function LinkBarcode(props: Props) {
     setQuery(val);
     if (searchTimer) clearTimeout(searchTimer);
     if (!val.trim()) {
+      searchSeq++; // invalidate any in-flight fetch
       setResults([]);
       return;
     }
+    const seq = ++searchSeq;
     searchTimer = setTimeout(async () => {
       try {
         const items = await api.searchItems(val.trim());
+        if (seq !== searchSeq) return; // superseded or cleared
         setResults(items);
       } catch {
         // Silently ignore search errors — user can retry
-        setResults([]);
+        if (seq === searchSeq) setResults([]);
       }
     }, LINK_SEARCH_DEBOUNCE_MS);
   }

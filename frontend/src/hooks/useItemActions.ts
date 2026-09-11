@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { api } from "../api";
-import { selectedIds, clearSelection, bumpItemsVersion } from "../store";
+import { selectedIds, setSelectedIds, clearSelection, bumpItemsVersion } from "../store";
 import type { Item, DeleteAction } from "../types";
 
 export interface ItemActionsControls {
@@ -8,7 +8,6 @@ export interface ItemActionsControls {
   setConfirmDelete: (action: DeleteAction | null) => void;
   editingItem: () => Item | null;
   setEditingItem: (item: Item | null) => void;
-  handleDeleteSingle: (item: Item) => void;
   handleHardDelete: (item: Item) => void;
   confirmDeleteAction: () => Promise<void>;
   handleRestore: (item: Item) => Promise<void>;
@@ -22,10 +21,6 @@ export interface ItemActionsControls {
 export function useItemActions(): ItemActionsControls {
   const [confirmDelete, setConfirmDelete] = createSignal<DeleteAction | null>(null);
   const [editingItem, setEditingItem] = createSignal<Item | null>(null);
-
-  function handleDeleteSingle(item: Item) {
-    setConfirmDelete({ type: "single", id: item.id, name: item.name });
-  }
 
   function handleHardDelete(item: Item) {
     setConfirmDelete({ type: "hard", id: item.id, name: item.name });
@@ -44,7 +39,9 @@ export function useItemActions(): ItemActionsControls {
         clearSelection();
       } else if (cd.type === "hard" && cd.id != null) {
         await api.hardDelete(cd.id);
-        clearSelection();
+        // A single-row hard delete must not wipe an unrelated multi-row
+        // selection — drop only the deleted id.
+        setSelectedIds(selectedIds().filter((selId) => selId !== cd.id));
       }
       bumpItemsVersion();
     } catch (err) {
@@ -86,7 +83,6 @@ export function useItemActions(): ItemActionsControls {
     setConfirmDelete,
     editingItem,
     setEditingItem,
-    handleDeleteSingle,
     handleHardDelete,
     confirmDeleteAction,
     handleRestore,
