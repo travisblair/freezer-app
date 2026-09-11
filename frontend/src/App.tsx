@@ -1,6 +1,6 @@
 import "@picocss/pico";
 import "./app.css";
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
 import { offline, needsAuth, setNeedsAuth, currentListId, setCurrentListId, currentListName, lists, setLists, clearSelection, statusMessage, flashStatus } from "./store";
 import { api } from "./api";
 import OfflineBanner from "./components/OfflineBanner";
@@ -26,14 +26,12 @@ export default function App() {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await fetch("/api/auth/check", { credentials: "same-origin" });
+        // A reachable 5xx with a JSON body used to parse as "not
+        // authenticated" and end the loop — treat non-OK as retryable.
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         if (data.authenticated) {
           setNeedsAuth(false);
-          // Initial notification fetch must run AFTER the gate clears —
-          // fetchNotifications() skips itself while needsAuth() is true,
-          // and the old mount ordering raced it every load (badge stayed
-          // 0 until the first 60s tick).
-          fetchNotifications();
         }
         return;
       } catch (_) {
@@ -76,6 +74,7 @@ export default function App() {
     try {
       await api.deleteList(id);
       setCurrentListId(1);
+      clearSelection(); // stale cross-list selection would act on dead ids
       const fresh = await api.getLists();
       setLists(fresh);
     } catch (_) { flashStatus("Failed to delete list"); }
@@ -100,8 +99,15 @@ export default function App() {
     setNotifOpen(true);
   }
 
+  // Fetch notifications whenever the gate CLEARS — covers both the boot
+  // auth check AND the interactive login form, keyed on the transition so
+  // it can't double-fire. The poll interval covers later refreshes.
+  createEffect(on(needsAuth, (locked) => {
+    if (!locked) fetchNotifications();
+  }, { defer: true }));
+
   // Poll for new notifications every 60 seconds. The INITIAL fetch runs
-  // in the auth onMount after the gate clears — calling it here raced
+  // via the gate-clear effect above — a direct call here raced
   // needsAuth() and self-skipped every load.
   onMount(() => {
     const interval = setInterval(fetchNotifications, 60000);

@@ -50,7 +50,7 @@ export default function Scanner() {
                 class="no-mb"
               />
             </label>
-            {!sc.scanning() && !sc.cameraError() && (
+            {!sc.scanning() && !sc.starting() && !sc.cameraError() && (
               <button type="button" onClick={sc.startCamera}>
                 Start Camera
               </button>

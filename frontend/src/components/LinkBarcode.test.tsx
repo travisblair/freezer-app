@@ -41,8 +41,12 @@ describe("LinkBarcode", () => {
     fireEvent.input(input, { target: { value: "" } }); // clear mid-flight
     resolveFetch([{ id: 1, name: "Milk" } as Item]);
 
-    await vi.waitFor(() => {
-      expect(screen.queryByText(/Milk/)).toBeNull();
-    });
+    // Flush microtasks BEFORE asserting: the old code's repopulation lands
+    // one tick after the resolution, and vi.waitFor's first check runs
+    // synchronously — without these flushes the test passed against the
+    // old code and pinned nothing.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText(/Milk/)).toBeNull();
   });
 });

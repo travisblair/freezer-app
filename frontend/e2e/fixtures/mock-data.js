@@ -167,7 +167,7 @@ export async function setupApiMocks(page, initialItems = null) {
   });
 
   // GET /api/item/:barcode
-  await page.route(/\/api\/item\/(?!bulk-delete|create|scan|link-barcode|hard)([A-Za-z0-9_-]+)$/, (route) => {
+  await page.route(/\/api\/item\/(?!bulk-delete|create|scan|link-barcode|hard)([A-Za-z0-9_%.-]+)$/, (route) => {
     const barcode = route.request().url().split("/").pop();
     const item = findItemByBarcode(dbItems, barcode);
     route.fulfill({
@@ -224,7 +224,18 @@ export async function setupApiMocks(page, initialItems = null) {
       };
       ITEM_SHELVES.push(is);
     }
-    is.count = Math.max(0, is.count + delta);
+    // Mirror the real API's strictness: over-decrement is a 409, not a
+    // silent clamp (a clamping mock could never expose UI 409 handling).
+    if (delta < 0 && is.count + delta < 0) {
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: `insufficient count: requested ${-delta}, available ${is.count}`,
+        }),
+      });
+    }
+    is.count = is.count + delta;
 
     route.fulfill({
       status: 200,
@@ -250,6 +261,13 @@ export async function setupApiMocks(page, initialItems = null) {
         status: 400,
         contentType: "application/json",
         body: JSON.stringify({ error: "Invalid quantity" }),
+      });
+    }
+    if (body.barcode && (body.barcode.length < 1 || body.barcode.length > 255)) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "barcode must be 1–255 chars" }),
       });
     }
 
@@ -331,7 +349,17 @@ export async function setupApiMocks(page, initialItems = null) {
       });
     }
 
-    if (body.name !== undefined) item.name = body.name.trim();
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed || trimmed.length > 100) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "name is required (≤ 100 chars)" }),
+        });
+      }
+      item.name = trimmed;
+    }
 
     route.fulfill({
       status: 200,
@@ -349,6 +377,13 @@ export async function setupApiMocks(page, initialItems = null) {
         status: 400,
         contentType: "application/json",
         body: JSON.stringify({ error: "No ids provided" }),
+      });
+    }
+    if (ids.length > 500) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "too many ids" }),
       });
     }
     let deleted = 0;
@@ -425,7 +460,14 @@ export async function setupApiMocks(page, initialItems = null) {
       });
     } else if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
-      const shelf = { id: nextShelfId++, name: body.name, listId: body.listId || 1 };
+      if (!body.name || body.name.trim() === "" || body.name.length > 100) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Invalid name" }),
+        });
+      }
+      const shelf = { id: nextShelfId++, name: body.name.trim(), listId: body.listId || 1 };
       SHELVES.push(shelf);
       route.fulfill({
         status: 201,
@@ -534,7 +576,19 @@ export async function setupApiMocks(page, initialItems = null) {
           body: JSON.stringify({ error: "Not found" }),
         });
       }
+      if (typeof body.count !== "number" || body.count < 0 || body.count > 9999) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "count must be 0–9999" }),
+        });
+      }
       is.count = body.count;
+      if (body.count === 0) {
+        // Real backend DELETES zero-count rows (no ghosts).
+        const idx = ITEM_SHELVES.indexOf(is);
+        ITEM_SHELVES.splice(idx, 1);
+      }
       route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -560,7 +614,24 @@ export async function setupApiMocks(page, initialItems = null) {
         body: JSON.stringify({ error: "Not found" }),
       });
     }
-    const qty = Math.min(quantity, source.count);
+    if (sourceShelfId === targetShelfId) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "source and target shelf must differ" }),
+      });
+    }
+    // Real API: over-quantity move is a 409, never a silent clamp.
+    if (quantity > source.count) {
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: `insufficient count: requested ${quantity}, available ${source.count}`,
+        }),
+      });
+    }
+    const qty = quantity;
     source.count -= qty;
 
     const target = ITEM_SHELVES.find(
@@ -593,9 +664,16 @@ export async function setupApiMocks(page, initialItems = null) {
       });
     } else if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
+      if (!body.name || body.name.trim() === "" || body.name.length > 100) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Invalid name" }),
+        });
+      }
       const list = {
         id: Math.max(0, ...LISTS.map((l) => l.id)) + 1,
-        name: body.name,
+        name: body.name.trim(),
       };
       LISTS.push(list);
       route.fulfill({
@@ -645,10 +723,16 @@ export async function setupApiMocks(page, initialItems = null) {
 
   // ── Export ──────────────────────────────────────────────────────────
   await page.route("**/api/export", (route) => {
+    // Mirror csvSafe: the real exporter prefixes formula triggers to
+    // defuse spreadsheet injection.
+    const csvSafe = (v) => {
+      const t = String(v).trim();
+      return /^[=+\-@]/.test(t) ? "'" + t : t;
+    };
     const rows = dbItems.map((i) => {
       const bcStrs = i.barcodes.map((b) => b.barcode);
       const count = totalCount(i.id);
-      return `${i.id},${escapeCsv(i.name)},${count},${bcStrs.join("|")}`;
+      return `${i.id},${escapeCsv(csvSafe(i.name))},${count},${escapeCsv(csvSafe(bcStrs.join("|")))}`;
     });
     const csv = ["id,name,count,barcodes", ...rows].join("\n") + "\n";
     route.fulfill({ status: 200, contentType: "text/csv", body: csv });

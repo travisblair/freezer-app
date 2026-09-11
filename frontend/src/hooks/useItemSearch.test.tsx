@@ -104,7 +104,14 @@ describe("useItemSearch", () => {
 
       resolveOld([{ id: 1, name: "Old" } as Item]);
       await p2;
+      // Flush microtasks: the stale continuation (old code) lands one tick
+      // after p2 resolves — without these flushes the test passed against
+      // the old code and pinned nothing.
+      await Promise.resolve();
+      await Promise.resolve();
       expect(items()).toEqual([{ id: 2, name: "New" }]);
+      // The newest request also owns the loading flag.
+      expect(hook!.loading()).toBe(false);
     });
   });
 });

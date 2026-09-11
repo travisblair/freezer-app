@@ -24,6 +24,7 @@ export interface ScannerControls {
   // State
   expanded: () => boolean;
   scanning: () => boolean;
+  starting: () => boolean;
   mode: () => "increment" | "decrement";
   setMode: (v: "increment" | "decrement") => void;
   quantity: () => number;
@@ -286,7 +287,7 @@ export function useScanner(): ScannerControls {
 
   return {
     // State
-    expanded, scanning: cam.scanning, mode, setMode, quantity, setQuantity,
+    expanded, scanning: cam.scanning, starting: cam.starting, mode, setMode, quantity, setQuantity,
     feedback, prompt, cameraError: cam.cameraError, duplicateOffer, setDuplicateOffer,
     isProcessing, setFeedback, linkBarcode,
     selectedShelfId, setSelectedShelfId, shelves,

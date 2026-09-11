@@ -3,6 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 
 export interface CameraControls {
   scanning: () => boolean;
+  starting: () => boolean;
   cameraError: () => string;
   startCamera: () => Promise<void>;
   stopCamera: () => Promise<void>;
@@ -19,12 +20,16 @@ export function useCamera(onScan: ((decodedText: string) => void) | null): Camer
   const [cameraError, setCameraError] = createSignal("");
 
   let scanner: Html5Qrcode | null = null;
+  // Generation counter: a stop() during an in-flight start() bumps it, so
+  // the superseded start can't flip scanning() true with scanner === null.
+  let startGen = 0;
 
   async function startCamera() {
     // In-flight guard: scanning() only flips true AFTER start() resolves,
     // so a double-click during the permission prompt used to spawn a
     // second Html5Qrcode instance and orphan the first (un-stoppable).
     if (scanning() || starting()) return;
+    const gen = ++startGen;
     setStarting(true);
     setCameraError("");
     try {
@@ -43,6 +48,7 @@ export function useCamera(onScan: ((decodedText: string) => void) | null): Camer
         },
         () => {},
       );
+      if (gen !== startGen) return; // superseded by a stop mid-start
       setScanning(true);
     } catch (err) {
       setCameraError(
@@ -55,6 +61,7 @@ export function useCamera(onScan: ((decodedText: string) => void) | null): Camer
   }
 
   async function stopCamera() {
+    startGen++; // invalidate any in-flight start
     if (scanner) {
       try { await scanner.stop(); } catch (_) { /* ignore */ }
       scanner = null;
@@ -63,8 +70,9 @@ export function useCamera(onScan: ((decodedText: string) => void) | null): Camer
   }
 
   function cleanup() {
+    startGen++;
     if (scanner) scanner.stop().catch(() => {});
   }
 
-  return { scanning, cameraError, startCamera, stopCamera, cleanup };
+  return { scanning, starting, cameraError, startCamera, stopCamera, cleanup };
 }

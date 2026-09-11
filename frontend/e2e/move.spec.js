@@ -37,6 +37,11 @@ test.describe("Move Modal", () => {
     await setupApiMocks(page, cloneItems());
     await authenticate(page);
 
+    // A second shelf is required for a real move: the backend 400s
+    // same-shelf moves, and the mock mirrors that strictness now.
+    await page.getByPlaceholder("New shelf name...").fill("Target Shelf");
+    await page.getByRole("button", { name: "+ Add Shelf" }).click();
+
     const row = itemRow(page, "Chicken Breast");
     await clickKebabItem(row, "Move");
 
