@@ -342,6 +342,7 @@ func setupRoutes(mux *http.ServeMux, db *gorm.DB) {
 
 	// Auth-protected mutating endpoints — CSRF + rate limiter
 	mux.Handle("POST /api/item/scan", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleScan(db))))))
+	mux.Handle("POST /api/item/restock", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleRestock(db))))))
 	mux.Handle("POST /api/item/create", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleCreate(db))))))
 	mux.Handle("POST /api/item/link-barcode", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleLinkBarcode(db))))))
 	mux.Handle("PATCH /api/item/{id}", requireAuth(db, globalRateLimit(csrfProtect(http.HandlerFunc(handleUpdateItem(db))))))
