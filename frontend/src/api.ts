@@ -112,6 +112,13 @@ export const api = {
     });
   },
 
+  restock(itemId: number, quantity: number, shelfId: number): Promise<Item> {
+    return request<Item>("/item/restock", {
+      method: "POST",
+      body: JSON.stringify({ itemId, quantity, shelfId }),
+    });
+  },
+
   linkBarcode(itemId: number, barcode: string): Promise<Item> {
     return request<Item>("/item/link-barcode", {
       method: "POST",

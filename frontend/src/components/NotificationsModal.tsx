@@ -14,6 +14,8 @@ function formatAction(log: AuditLog): string {
     switch (log.action) {
       case "scan":
         return `scanned ${details.mode === "decrement" ? "−" : "+"}${details.quantity} in ${details.shelf || "?"}`;
+      case "restock":
+        return `restocked +${details.quantity} in ${details.shelf || "?"}`;
       case "create":
         return `added ${log.entity_name}`;
       case "update":
