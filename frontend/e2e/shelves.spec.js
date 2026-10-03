@@ -63,6 +63,7 @@ test.describe("Shelf Management", () => {
 
     // Shelf 1 should have no trash button
     const shelf1Header = page.locator(".shelf-header").filter({ hasText: "Shelf 1" });
+    await expect(shelf1Header).toBeVisible();
     const buttons = shelf1Header.locator("button");
     const count = await buttons.count();
     // Only pencil button (no trash) for shelf 1
