@@ -190,7 +190,6 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 		// separate check and the write used to create rows on a shelf that no
 		// longer existed.
 		var targetShelf Shelf
-		var itemShelf ItemShelf
 		delta := body.Quantity
 		if body.Mode == "decrement" {
 			delta = -delta
@@ -200,39 +199,23 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			if err := tx.First(&targetShelf, targetShelfID).Error; err != nil {
 				return err
 			}
-			firstErr := tx.Where("item_id = ? AND shelf_id = ?", item.ID, targetShelfID).First(&itemShelf).Error
-			if errors.Is(firstErr, gorm.ErrRecordNotFound) {
-				if body.Mode == "decrement" {
+			itemShelf, created, err := findOrCreateShelfRow(tx, item.ID, targetShelfID)
+			if err != nil {
+				return err
+			}
+			if body.Mode == "decrement" {
+				if created {
 					// Decrementing a row that doesn't exist = nothing to
 					// decrement. Reject instead of silently succeeding.
 					return fmt.Errorf("%w: requested %d, available 0", ErrInsufficientCount, body.Quantity)
 				}
-				itemShelf = ItemShelf{ItemID: item.ID, ShelfID: targetShelfID, Count: 0}
-				if err := tx.Create(&itemShelf).Error; err != nil {
-					return err
+				if itemShelf.Count < body.Quantity {
+					// Mirror moveItem's 409 semantics: over-decrementing is a
+					// client error (double-scan), not a silent clamp to zero.
+					return fmt.Errorf("%w: requested %d, available %d", ErrInsufficientCount, body.Quantity, itemShelf.Count)
 				}
-			} else if firstErr != nil {
-				return firstErr
 			}
-			if body.Mode == "decrement" && itemShelf.Count < body.Quantity {
-				// Mirror moveItem's 409 semantics: over-decrementing is a
-				// client error (double-scan), not a silent clamp to zero.
-				return fmt.Errorf("%w: requested %d, available %d", ErrInsufficientCount, body.Quantity, itemShelf.Count)
-			}
-			// Atomic update on the ItemShelf row
-			if err := tx.Model(&itemShelf).Update("count",
-				gorm.Expr("MAX(0, count + ?)", delta)).Error; err != nil {
-				return err
-			}
-			// Reload count; if zero, delete the row (consistent with
-			// handleSetShelfCount and handleMoveItem).
-			if err := tx.Select("count").First(&itemShelf, itemShelf.ID).Error; err != nil {
-				return err
-			}
-			if itemShelf.Count == 0 {
-				return tx.Delete(&itemShelf).Error
-			}
-			return nil
+			return applyCountDelta(tx, itemShelf.ID, delta)
 		}); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
@@ -265,6 +248,89 @@ func handleScan(db *gorm.DB) http.HandlerFunc {
 			"action": "updated",
 			"item":   item,
 		})
+	}
+}
+
+// ── Restock (add stock to a specific shelf) ────────────────────────────
+
+// handleRestock adds stock to an item on an explicit shelf. Unlike scan it
+// takes itemId (not a barcode) and never defaults the shelf, so the caller
+// must say exactly where the stock lands. Responds with the full reloaded
+// item — the same wire shape handleCreate returns.
+func handleRestock(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ItemID   uint `json:"itemId"`
+			Quantity int  `json:"quantity"`
+			ShelfID  uint `json:"shelfId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if body.ItemID == 0 {
+			errorJSON(w, http.StatusBadRequest, "itemId is required")
+			return
+		}
+		if !validQty(body.Quantity) {
+			errorJSON(w, http.StatusBadRequest, "quantity must be 1–9999")
+			return
+		}
+		if body.ShelfID == 0 {
+			errorJSON(w, http.StatusBadRequest, "shelfId is required")
+			return
+		}
+
+		var item Item
+		if err := db.First(&item, body.ItemID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusNotFound, "item not found")
+			} else {
+				GetLogger().Error("restock item lookup failed for %d: %v", body.ItemID, err)
+				errorJSON(w, http.StatusInternalServerError, "internal server error")
+			}
+			return
+		}
+
+		// Target-shelf existence check lives INSIDE the transaction (same
+		// TOCTOU class as scan): a concurrent DELETE /api/shelf/{id} between
+		// a separate check and the write used to materialize stock rows on
+		// a shelf that no longer existed.
+		var targetShelf Shelf
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.First(&targetShelf, body.ShelfID).Error; err != nil {
+				return err
+			}
+			row, _, err := findOrCreateShelfRow(tx, item.ID, body.ShelfID)
+			if err != nil {
+				return err
+			}
+			return applyCountDelta(tx, row.ID, body.Quantity)
+		})
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				errorJSON(w, http.StatusBadRequest, "shelf does not exist")
+				return
+			}
+			GetLogger().Error("restock transaction failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "restock update failed"})
+			return
+		}
+
+		// Audit BEFORE the post-commit reload — same ordering as handleScan:
+		// if the reload fails, the mutation has already committed and must
+		// still be audited. targetShelf.Name is already loaded.
+		logAudit(db, r, "restock", "item", item.ID, item.Name,
+			auditDetails(map[string]any{"shelf": targetShelf.Name, "quantity": body.Quantity}))
+
+		// Reload item with updated shelves
+		if err := db.Preload("Barcodes").Preload("Shelves", orderedShelves()).First(&item, item.ID).Error; err != nil {
+			GetLogger().Error("failed to reload item %d after restock: %v", item.ID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, item)
 	}
 }
 
