@@ -184,10 +184,15 @@ export async function setupApiMocks(page, initialItems = null) {
     if (route.request().method() !== "GET") return route.fallback();
     const url = new URL(route.request().url());
     const q = (url.searchParams.get("q") || "").toLowerCase();
-    const results = dbItems
-      .filter((i) => totalCount(i.id) > 0 && i.name.toLowerCase().includes(q))
-      .slice(0, 10)
-      .map(withShelves);
+    // The real endpoint answers [] for an empty query and INCLUDES
+    // out-of-stock (zero-count) items — the client renders the counts from
+    // the preloaded shelves.
+    const results = q === ""
+      ? []
+      : dbItems
+          .filter((i) => i.name.toLowerCase().includes(q))
+          .slice(0, 10)
+          .map(withShelves);
     route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -241,6 +246,79 @@ export async function setupApiMocks(page, initialItems = null) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ action: "updated", item: withShelves(item) }),
+    });
+  });
+
+  // POST /api/item/restock
+  await page.route("**/api/item/restock", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+
+    // Mirror the real handler's strictness exactly: every field is required
+    // and validated — nothing is coerced or defaulted when missing.
+    if (typeof body.itemId !== "number" || !Number.isInteger(body.itemId) || body.itemId <= 0) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "itemId is required" }),
+      });
+    }
+    if (
+      typeof body.quantity !== "number" ||
+      !Number.isInteger(body.quantity) ||
+      body.quantity < 1 ||
+      body.quantity > 9999
+    ) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "quantity must be 1–9999" }),
+      });
+    }
+    if (typeof body.shelfId !== "number" || !Number.isInteger(body.shelfId) || body.shelfId <= 0) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "shelfId is required" }),
+      });
+    }
+
+    const item = dbItems.find((i) => i.id === body.itemId);
+    if (!item) {
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "item not found" }),
+      });
+    }
+
+    const shelf = SHELVES.find((s) => s.id === body.shelfId);
+    if (!shelf) {
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "shelf does not exist" }),
+      });
+    }
+
+    let is = ITEM_SHELVES.find(
+      (s) => s.itemId === item.id && s.shelfId === body.shelfId,
+    );
+    if (!is) {
+      is = {
+        id: nextItemShelfId++,
+        itemId: item.id,
+        shelfId: body.shelfId,
+        count: 0,
+      };
+      ITEM_SHELVES.push(is);
+    }
+    is.count += body.quantity;
+
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(withShelves(item)),
     });
   });
 

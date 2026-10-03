@@ -241,6 +241,51 @@
   width: 5rem;
 }
 
+/* Restock autocomplete (Name field) */
+.manual-add-name {
+  position: relative;
+  flex-basis: 100%;
+}
+.manual-add-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin-bottom: 0;
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.manual-add-dropdown .link-barcode-item {
+  width: 100%;
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  background: none;
+  color: var(--pico-color, #222);
+  text-align: left;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+.manual-add-dropdown .link-barcode-item:hover {
+  background: var(--pico-muted-border-color);
+}
+.restock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.25rem;
+  background: var(--pico-card-background-color, #f8f9fa);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+}
+.restock-chip-name {
+  font-weight: 600;
+}
+
 .table-controls {
   display: flex;
   gap: 1rem;
