@@ -109,6 +109,7 @@ export default function ManualAddForm(props: { listId: number }) {
         setName("");
         setBarcode("");
         setQuantity(1);
+        setShelfId(shelves()[0]?.id ?? 1);
         setResults([]);
         setRestockItem(null); // success auto-exits restock mode
       } catch (err: unknown) {
@@ -133,6 +134,8 @@ export default function ManualAddForm(props: { listId: number }) {
       setName("");
       setBarcode("");
       setQuantity(1);
+      setShelfId(shelves()[0]?.id ?? 1);
+      setResults([]);
     } catch (err: unknown) {
       const apiErr = err as { status?: number; item?: Item; error?: string };
       if (apiErr.status === 409 && apiErr.item) {
