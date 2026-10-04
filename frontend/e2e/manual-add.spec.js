@@ -131,6 +131,21 @@ test.describe("Manual Add — Restock Autocomplete", () => {
     // The debounce coalesces the per-keystroke input events into one request.
     expect(searchCalls.length).toBe(1);
     expect(searchCalls[0]).toContain("q=chick");
+
+    // Text must be visible: the item's computed color must differ from the
+    // dropdown background (pins the Pico --pico-color poisoning bug — Pico
+    // redefines --pico-color to primary-inverse ON button elements, which
+    // rendered white text on the white card).
+    const [itemColor, dropBg] = await page
+      .getByRole("button", { name: "Chicken Breast (3 in stock)" })
+      .evaluate((el) => {
+        const drop = el.closest(".manual-add-dropdown");
+        return [
+          getComputedStyle(el).color,
+          drop ? getComputedStyle(drop).backgroundColor : "",
+        ];
+      });
+    expect(itemColor).not.toBe(dropBg);
   });
 
   test("selecting an out-of-stock item enters restock mode", async ({ page }) => {

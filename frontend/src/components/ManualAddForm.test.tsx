@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@solidjs/testing-library";
 import ManualAddForm from "./ManualAddForm";
-import type { Item } from "../types";
+import type { Item, Shelf } from "../types";
 import { LINK_SEARCH_DEBOUNCE_MS } from "../constants";
 
 vi.mock("../api", () => ({
@@ -148,20 +148,27 @@ describe("ManualAddForm restock autocomplete", () => {
   });
 
   it("submits a restock with itemId/quantity/shelfId and resets on success", async () => {
+    vi.mocked(api.getShelves).mockResolvedValue([
+      { id: 1, name: "Shelf 1" } as Shelf,
+      { id: 2, name: "Shelf 2" } as Shelf,
+    ]);
     await renderAndSelect("bacon", bacon());
     vi.mocked(api.restock).mockResolvedValue({ id: 5, name: "Bacon" } as Item);
 
     fireEvent.input(screen.getByRole("spinbutton"), { target: { value: "4" } });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "2" } });
     fireEvent.submit(screen.getByRole("button", { name: "Restock" }).closest("form")!);
     await flush();
 
-    expect(api.restock).toHaveBeenCalledWith(5, 4, 1);
+    expect(api.restock).toHaveBeenCalledWith(5, 4, 2);
     expect(screen.getByText('Restocked "Bacon"')).toBeTruthy();
     // Success auto-exits restock mode and resets the form.
     expect(screen.queryByText("Bacon")).toBeNull(); // chip gone
     expect((screen.getByPlaceholderText("e.g. Chicken Breast") as HTMLInputElement).value).toBe("");
     expect(screen.getByPlaceholderText("Optional")).toBeTruthy(); // barcode field back
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("1");
+    // Shelf resets to the first shelf.
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("1");
   });
 
   it("keeps the selection and stays in restock mode when restock fails", async () => {
@@ -195,19 +202,27 @@ describe("ManualAddForm restock autocomplete", () => {
     expect(screen.getByText(/Bacon/)).toBeTruthy(); // dropdown re-opened with prior results
   });
 
-  it("leaves the create path unchanged when no item is selected", async () => {
+  it("leaves the create path unchanged when no item is selected, and resets the shelf", async () => {
     vi.useFakeTimers();
+    vi.mocked(api.getShelves).mockResolvedValue([
+      { id: 1, name: "Shelf 1" } as Shelf,
+      { id: 2, name: "Shelf 2" } as Shelf,
+    ]);
     vi.mocked(api.create).mockResolvedValue({ id: 9, name: "Pizza Rolls" } as Item);
 
     render(() => <ManualAddForm listId={1} />);
+    await flush(); // shelves load
     const input = screen.getByPlaceholderText("e.g. Chicken Breast");
     fireEvent.input(input, { target: { value: "Pizza Rolls" } });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "2" } });
     fireEvent.submit(input.closest("form")!);
     await flush();
 
-    expect(api.create).toHaveBeenCalledWith(null, "Pizza Rolls", 1, 1);
+    expect(api.create).toHaveBeenCalledWith(null, "Pizza Rolls", 1, 2);
     expect(api.restock).not.toHaveBeenCalled();
     expect(screen.getByText('Added "Pizza Rolls"')).toBeTruthy();
+    // Shelf resets to the first shelf after success.
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("1");
   });
 
   it("a slow search response cannot repopulate results after the query is cleared", async () => {
